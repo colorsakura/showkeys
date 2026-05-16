@@ -1,3 +1,5 @@
+# [UNMAINTAINED] Please use another fork.
+
 # wshowkeys
 
 Displays keypresses on screen on supported Wayland compositors (requires
