@@ -56,7 +56,7 @@ struct wsk_state {
   struct wl_surface *surface;
   struct zwlr_layer_surface_v1 *layer_surface;
   uint32_t width, height;
-  bool frame_scheduled, dirty;
+  bool layer_configured, frame_scheduled, dirty;
   struct pool_buffer buffers[2];
   struct pool_buffer *current_buffer;
   struct wsk_output *output, *outputs;
@@ -195,9 +195,10 @@ static void render_frame(struct wsk_state *state) {
 }
 
 static void set_dirty(struct wsk_state *state) {
-  if (state->frame_scheduled) {
+  if (state->frame_scheduled || !state->layer_configured) {
     state->dirty = true;
   } else if (state->surface) {
+    state->dirty = false;
     render_frame(state);
   }
 }
@@ -209,6 +210,7 @@ layer_surface_configure(void *data,
   struct wsk_state *state = data;
   state->width = width;
   state->height = height;
+  state->layer_configured = true;
   zwlr_layer_surface_v1_ack_configure(zwlr_layer_surface_v1, serial);
   set_dirty(state);
 }
