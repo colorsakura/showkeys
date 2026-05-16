@@ -1,5 +1,5 @@
 project(
-  'wshowkeys',
+  'showkeys',
   'c',
   version: '0.1.0',
   license: 'GPL',
@@ -74,7 +74,7 @@ sk_deps = [
 ]
 
 executable(
-  'wshowkeys',
+  'showkeys',
   sk_src,
   include_directories: sk_inc,
   dependencies: sk_deps,
