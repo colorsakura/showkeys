@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -32,6 +33,32 @@ struct wsk_output {
   int scale;
   enum wl_output_subpixel subpixel;
   struct wsk_output *next;
+};
+
+struct keycap_style {
+  int padding_x;
+  int padding_y;
+  int gap;
+  int radius;
+  int border_width;
+  uint32_t normal_bg;
+  uint32_t normal_fg;
+  uint32_t special_bg;
+  uint32_t special_fg;
+  uint32_t border;
+};
+
+struct keycap_layout {
+  const struct wsk_keypress *key;
+  const char *label;
+  bool special;
+  int text_width;
+  int text_height;
+  int text_baseline;
+  int x;
+  int y;
+  int width;
+  int height;
 };
 
 struct wsk_state {
@@ -80,6 +107,25 @@ static void cairo_set_source_u32(cairo_t *cairo, uint32_t color) {
                         (color >> (0 * 8) & 0xFF) / 255.0);
 }
 
+static void rounded_rectangle(cairo_t *cairo, double x, double y, double w,
+                              double h, double r) {
+  if (r > w / 2.0) {
+    r = w / 2.0;
+  }
+  if (r > h / 2.0) {
+    r = h / 2.0;
+  }
+
+  cairo_new_sub_path(cairo);
+  cairo_arc(cairo, x + w - r, y + r, r, -1.5707963267948966, 0.0);
+  cairo_arc(cairo, x + w - r, y + h - r, r, 0.0, 1.5707963267948966);
+  cairo_arc(cairo, x + r, y + h - r, r, 1.5707963267948966,
+            3.141592653589793);
+  cairo_arc(cairo, x + r, y + r, r, 3.141592653589793,
+            4.71238898038469);
+  cairo_close_path(cairo);
+}
+
 static cairo_subpixel_order_t
 to_cairo_subpixel_order(enum wl_output_subpixel subpixel) {
   switch (subpixel) {
@@ -99,39 +145,91 @@ to_cairo_subpixel_order(enum wl_output_subpixel subpixel) {
 
 static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
                             uint32_t *width, uint32_t *height) {
+  const struct keycap_style style = {
+      .padding_x = 12,
+      .padding_y = 6,
+      .gap = 6,
+      .radius = 8,
+      .border_width = 1,
+      .normal_bg = 0x222222CC,
+      .normal_fg = state->foreground,
+      .special_bg = 0x444444CC,
+      .special_fg = state->specialfg,
+      .border = 0xFFFFFF33,
+  };
+
   cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
   cairo_set_source_u32(cairo, state->background);
   cairo_paint(cairo);
+  cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
 
-  struct wsk_keypress *key = state->keys;
-  while (key) {
-    bool special = false;
-    const char *name = key->utf8;
-    if (!name[0]) {
-      special = true;
-      cairo_set_source_u32(cairo, state->specialfg);
-      name = key->name;
-    } else {
-      cairo_set_source_u32(cairo, state->foreground);
-    }
-
-    cairo_move_to(cairo, *width, 0);
-
-    int w, h;
-    if (special) {
-      get_text_size(cairo, state->font, &w, &h, NULL, scale, "%s+", name);
-      pango_printf(cairo, state->font, scale, "%s+", name);
-    } else {
-      get_text_size(cairo, state->font, &w, &h, NULL, scale, "%s", name);
-      pango_printf(cairo, state->font, scale, "%s", name);
-    }
-
-    *width = *width + w;
-    if ((int)*height < h) {
-      *height = h;
-    }
-    key = key->next;
+  size_t key_count = 0;
+  for (const struct wsk_keypress *key = state->keys; key; key = key->next) {
+    ++key_count;
   }
+  if (key_count == 0) {
+    return;
+  }
+
+  struct keycap_layout *layouts = calloc(key_count, sizeof(*layouts));
+  if (!layouts) {
+    return;
+  }
+
+  const int padding_x = style.padding_x * scale;
+  const int padding_y = style.padding_y * scale;
+  const int gap = style.gap * scale;
+  const int radius = style.radius * scale;
+  const int border_width = style.border_width * scale;
+
+  size_t i = 0;
+  int x = 0;
+  int max_height = 0;
+  for (const struct wsk_keypress *key = state->keys; key; key = key->next) {
+    struct keycap_layout *layout = &layouts[i++];
+    layout->key = key;
+    layout->special = key->utf8[0] == '\0';
+    layout->label = layout->special ? key->name : key->utf8;
+    get_text_size(cairo, state->font, &layout->text_width,
+                  &layout->text_height, &layout->text_baseline, scale, "%s",
+                  layout->label);
+    layout->x = x;
+    layout->width = layout->text_width + padding_x * 2;
+    layout->height = layout->text_height + padding_y * 2;
+    x += layout->width + gap;
+    if (max_height < layout->height) {
+      max_height = layout->height;
+    }
+  }
+
+  *width = x - gap;
+  *height = max_height;
+
+  for (i = 0; i < key_count; ++i) {
+    struct keycap_layout *layout = &layouts[i];
+    layout->y = (max_height - layout->height) / 2;
+
+    rounded_rectangle(cairo, layout->x, layout->y, layout->width,
+                      layout->height, radius);
+    cairo_set_source_u32(cairo,
+                         layout->special ? style.special_bg : style.normal_bg);
+    cairo_fill_preserve(cairo);
+
+    if (border_width > 0) {
+      cairo_set_line_width(cairo, border_width);
+      cairo_set_source_u32(cairo, style.border);
+      cairo_stroke(cairo);
+    } else {
+      cairo_new_path(cairo);
+    }
+
+    cairo_set_source_u32(cairo,
+                         layout->special ? style.special_fg : style.normal_fg);
+    cairo_move_to(cairo, layout->x + padding_x, layout->y + padding_y);
+    pango_printf(cairo, state->font, scale, "%s", layout->label);
+  }
+
+  free(layouts);
 }
 
 static const struct wl_surface_listener wl_surface_listener;
@@ -236,7 +334,8 @@ static void render_frame(struct wsk_state *state) {
 
     wl_surface_set_buffer_scale(state->surface, scale);
     wl_surface_attach(state->surface, state->current_buffer->buffer, 0, 0);
-    wl_surface_damage_buffer(state->surface, 0, 0, state->width, state->height);
+    wl_surface_damage_buffer(state->surface, 0, 0, state->width * scale,
+                             state->height * scale);
     wl_surface_commit(state->surface);
   }
 }
