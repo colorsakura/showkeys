@@ -1,10 +1,10 @@
 const std = @import("std");
 
 const c_sources = [_][]const u8{
-    "src/devmgr.c",
-    "src/main.c",
-    "src/pango.c",
-    "src/shm.c",
+    "devmgr.c",
+    "main.c",
+    "pango.c",
+    "shm.c",
 };
 
 const pkg_config_deps = [_][]const u8{
@@ -35,32 +35,34 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const devpath = b.option([]const u8, "devpath", "Input device path prefix compiled into the privileged device manager") orelse "/dev/input/";
 
-    const module = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-
-    module.addCSourceFiles(.{
-        .files = &c_sources,
-        .flags = cFlags(b, devpath),
-    });
-    module.addIncludePath(b.path("src"));
-
-    for (pkg_config_deps) |dep| {
-        module.linkSystemLibrary(dep, .{ .use_pkg_config = .force });
-    }
-    module.linkSystemLibrary("rt", .{});
-
-    const wayland_scanner = b.findProgram(&.{"wayland-scanner"}, &.{}) catch @panic("wayland-scanner not found");
-    const protocol_output_dir = generateProtocols(b, module, wayland_scanner);
-    module.addIncludePath(protocol_output_dir);
-
     const exe = b.addExecutable(.{
         .name = "showkeys",
-        .root_module = module,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
         .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
+    const root_module = exe.root_module;
+
+    root_module.addCSourceFiles(.{
+        .root = b.path("src"),
+        .files = &c_sources,
+        .flags = cFlags(),
+    });
+    root_module.addIncludePath(b.path("src"));
+    root_module.addCMacro("_POSIX_C_SOURCE", "200809L");
+    root_module.addCMacro("INPUTDEVPATH", b.fmt("\"{s}\"", .{devpath}));
+
+    for (pkg_config_deps) |dep| {
+        root_module.linkSystemLibrary(dep, .{ .use_pkg_config = .force });
+    }
+    root_module.linkSystemLibrary("rt", .{});
+
+    const wayland_scanner = b.findProgram(&.{"wayland-scanner"}, &.{}) catch @panic("wayland-scanner not found");
+    const protocol_output_dir = generateProtocols(b, root_module, wayland_scanner);
+    root_module.addIncludePath(protocol_output_dir);
 
     b.installArtifact(exe);
 
@@ -72,11 +74,9 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 }
 
-fn cFlags(b: *std.Build, devpath: []const u8) []const []const u8 {
-    return b.dupeStrings(&.{
+fn cFlags() []const []const u8 {
+    return &.{
         "-std=c23",
-        "-D_POSIX_C_SOURCE=200809L",
-        b.fmt("-DINPUTDEVPATH=\"{s}\"", .{devpath}),
         "-Wall",
         "-Wextra",
         "-Wundef",
@@ -93,7 +93,7 @@ fn cFlags(b: *std.Build, devpath: []const u8) []const []const u8 {
         "-Wno-missing-braces",
         "-Wno-missing-field-initializers",
         "-Wno-unused-parameter",
-    });
+    };
 }
 
 fn generateProtocols(b: *std.Build, module: *std.Build.Module, wayland_scanner: []const u8) std.Build.LazyPath {
