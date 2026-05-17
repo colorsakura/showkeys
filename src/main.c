@@ -386,6 +386,17 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
   const int border_width = style.border_width * scale;
   const int icon_size = style.icon_size * scale;
 
+  int text_min_width = 0;
+  int text_min_height = 0;
+  int text_min_baseline = 0;
+  get_text_size(cairo, state->font, &text_min_width, &text_min_height,
+                &text_min_baseline, scale, "M");
+
+  const int min_content_width =
+      icon_size > text_min_width ? icon_size : text_min_width;
+  const int min_content_height =
+      icon_size > text_min_height ? icon_size : text_min_height;
+
   size_t i = 0;
   int max_width = 0;
   int max_height = 0;
@@ -401,6 +412,12 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
                   layout->label);
     int content_width = layout->icon_svg ? icon_size : layout->text_width;
     int content_height = layout->icon_svg ? icon_size : layout->text_height;
+    if (content_width < min_content_width) {
+      content_width = min_content_width;
+    }
+    if (content_height < min_content_height) {
+      content_height = min_content_height;
+    }
     layout->width = content_width + padding_x * 2;
     layout->height = content_height + padding_y * 2;
     if (max_width < layout->width) {
