@@ -51,3 +51,9 @@ showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] [-t timeout] [-n max-keys]
   `icons/page-up.svg`, `icons/caps-lock.svg`, `icons/shift.svg`,
   `icons/ctrl.svg`, `icons/super.svg`, `icons/arrow-left.svg`,
   `icons/volume-up.svg`, and `icons/brightness.svg`.
+
+## Roadmap
+
+- [ ] 新增配置文件，优先级：系统配置->用户配置->命令行
+- [ ] 监控配置的变动，自动应用
+- [ ] 使用 GPUI 编写一个配置界面，与主程序隔离
