@@ -893,7 +893,8 @@ int main(int argc, char *argv[]) {
   /* Begin normal user code: */
   int ret = 0;
 
-  state.anchor = 0;
+  state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+                 ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
   state.margin = 32;
   state.background = 0x00000000;
   state.specialfg = 0xAAAAAAFF;
