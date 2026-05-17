@@ -1,18 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" preserveAspectRatio="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" preserveAspectRatio="none">
   <defs>
-    <linearGradient id="apple-glass" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#f7f7f9" stop-opacity="0.34"/>
-      <stop offset="0.48" stop-color="#2f3035" stop-opacity="0.72"/>
-      <stop offset="1" stop-color="#111216" stop-opacity="0.88"/>
+    <linearGradient id="glass-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbfbfd" stop-opacity="0.40"/>
+      <stop offset="0.42" stop-color="#34363d" stop-opacity="0.76"/>
+      <stop offset="1" stop-color="#0f1014" stop-opacity="0.92"/>
     </linearGradient>
-    <linearGradient id="apple-rim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.62"/>
-      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.18"/>
-      <stop offset="1" stop-color="#000000" stop-opacity="0.18"/>
+    <linearGradient id="glass-rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.70"/>
+      <stop offset="0.52" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.24"/>
+    </linearGradient>
+    <linearGradient id="top-sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
   </defs>
-  <rect x="0.7" y="0.7" width="22.6" height="22.6" rx="5" ry="5" fill="url(#apple-glass)"/>
-  <rect x="1" y="1" width="22" height="22" rx="4.7" ry="4.7" fill="none" stroke="url(#apple-rim)" stroke-width="0.35"/>
-  <path d="M4 2.4h16c1.2 0 2.1.8 2.1 2v1.2C15.7 4.4 9.8 4.4 1.9 5.8V4.4c0-1.2.9-2 2.1-2Z" fill="#ffffff" opacity="0.18"/>
-  <path d="M4.1 22h15.8" stroke="#000000" stroke-opacity="0.22" stroke-width="0.35" stroke-linecap="round"/>
+  <rect x="0.65" y="0.65" width="22.7" height="22.7" rx="5.4" fill="url(#glass-fill)"/>
+  <rect x="0.9" y="0.9" width="22.2" height="22.2" rx="5.15" fill="none" stroke="url(#glass-rim)" stroke-width="0.45"/>
+  <path d="M4.2 2.35h15.6c1.25 0 2.25 1 2.25 2.25v1.25C15.55 4.65 9.1 4.65 1.95 5.95V4.6c0-1.25 1-2.25 2.25-2.25Z" fill="url(#top-sheen)"/>
+  <path d="M4.4 21.95h15.2" stroke="#000000" stroke-opacity="0.28" stroke-width="0.35" stroke-linecap="round"/>
 </svg>

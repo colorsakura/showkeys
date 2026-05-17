@@ -1,7 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <path d="M4.6 7.6h11.2" fill="none" stroke="#f5f5f7" stroke-width="2.15" stroke-linecap="round"/>
-  <path d="M12.4 4.2l3.6 3.4-3.6 3.4" fill="none" stroke="#f5f5f7" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M19.4 4.4v15.2" fill="none" stroke="#f5f5f7" stroke-width="2.15" stroke-linecap="round" opacity="0.62"/>
-  <path d="M19.4 16.4H8.2" fill="none" stroke="#f5f5f7" stroke-width="2.15" stroke-linecap="round" opacity="0.62"/>
-  <path d="M11.6 19.8L8 16.4l3.6-3.4" fill="none" stroke="#f5f5f7" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" opacity="0.62"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+  <g stroke="#f5f5f7" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4.8 7.7h10.8"/>
+    <path d="m12.3 4.4 3.4 3.3-3.4 3.3"/>
+    <path d="M19.2 4.6v14.8" opacity="0.55"/>
+    <path d="M19.2 16.3H8.4" opacity="0.55"/>
+    <path d="M11.7 19.6 8.3 16.3l3.4-3.3" opacity="0.55"/>
+  </g>
 </svg>
