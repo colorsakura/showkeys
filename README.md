@@ -13,13 +13,14 @@ Dependencies:
 - pango
 - udev 
 - wayland 
-- xkbcommon 
+- xkbcommon
 
-```
-$ meson build
-$ ninja -C build
-# ninja -C build install
-# chmod a+s /usr/bin/showkeys
+```shell
+# build
+make build
+
+# install
+make install
 ```
 
 showkeys must be configured as setuid during installation. It requires root
