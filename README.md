@@ -44,3 +44,7 @@ showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] [-t timeout]
   (unimplemented)
 - *-k key.svg*: draw each keycap background with an SVG file. If loading or
   rendering fails, showkeys falls back to the built-in Cairo keycap background.
+  Special-key icons are loaded from an `icons/` directory next to `key.svg`
+  when available, for example `icons/enter.svg`, `icons/backspace.svg`,
+  `icons/space.svg`, `icons/shift.svg`, `icons/ctrl.svg`, `icons/alt.svg`,
+  `icons/super.svg`, and `icons/arrow-left.svg`.

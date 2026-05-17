@@ -42,6 +42,7 @@ struct keycap_style {
   int gap;
   int radius;
   int border_width;
+  int icon_size;
   uint32_t normal_bg;
   uint32_t normal_fg;
   uint32_t special_bg;
@@ -49,10 +50,19 @@ struct keycap_style {
   uint32_t border;
 };
 
+struct icon_cache_entry {
+  char *icon_name;
+  RsvgHandle *svg;
+  bool failed;
+  struct icon_cache_entry *next;
+};
+
 struct keycap_layout {
   const struct wsk_keypress *key;
   const char *label;
   bool special;
+  const char *icon_name;
+  RsvgHandle *icon_svg;
   int text_width;
   int text_height;
   int text_baseline;
@@ -60,6 +70,10 @@ struct keycap_layout {
   int y;
   int width;
   int height;
+  int icon_x;
+  int icon_y;
+  int text_x;
+  int text_y;
 };
 
 struct wsk_state {
@@ -72,8 +86,10 @@ struct wsk_state {
   const char *font;
   int timeout;
   const char *key_svg_path;
+  char *icon_dir;
   RsvgHandle *key_svg;
   bool key_svg_failed;
+  struct icon_cache_entry *icons;
 
   struct wl_display *display;
   struct wl_registry *registry;
@@ -130,6 +146,124 @@ static void rounded_rectangle(cairo_t *cairo, double x, double y, double w,
   cairo_close_path(cairo);
 }
 
+static char *xstrdup(const char *str) {
+  size_t len = strlen(str) + 1;
+  char *copy = malloc(len);
+  if (copy) {
+    memcpy(copy, str, len);
+  }
+  return copy;
+}
+
+static char *path_dirname(const char *path) {
+  const char *slash = strrchr(path, '/');
+  if (!slash) {
+    return xstrdup(".");
+  }
+  if (slash == path) {
+    return xstrdup("/");
+  }
+
+  size_t len = (size_t)(slash - path);
+  char *dir = malloc(len + 1);
+  if (!dir) {
+    return NULL;
+  }
+  memcpy(dir, path, len);
+  dir[len] = '\0';
+  return dir;
+}
+
+static char *join_path3(const char *dir, const char *subdir, const char *file) {
+  const char *sep1 = (dir[0] && dir[strlen(dir) - 1] == '/') ? "" : "/";
+  const char *sep2 = (subdir[0] && subdir[strlen(subdir) - 1] == '/') ? "" : "/";
+  size_t len = strlen(dir) + strlen(sep1) + strlen(subdir) + strlen(sep2) +
+               strlen(file) + 1;
+  char *path = malloc(len);
+  if (!path) {
+    return NULL;
+  }
+  snprintf(path, len, "%s%s%s%s%s", dir, sep1, subdir, sep2, file);
+  return path;
+}
+
+static const char *special_icon_name(const char *key_name) {
+  static const struct {
+    const char *key_name;
+    const char *icon_name;
+  } icon_map[] = {
+      {"Enter", "enter.svg"},       {"BackSpace", "backspace.svg"},
+      {"space", "space.svg"},       {"KP_Space", "space.svg"},
+      {"Shift_L", "shift.svg"},     {"Shift_R", "shift.svg"},
+      {"Control_L", "ctrl.svg"},    {"Control_R", "ctrl.svg"},
+      {"Alt_L", "alt.svg"},         {"Alt_R", "alt.svg"},
+      {"Super_L", "super.svg"},     {"Super_R", "super.svg"},
+      {"Left", "arrow-left.svg"},   {"Right", "arrow-right.svg"},
+      {"Up", "arrow-up.svg"},       {"Down", "arrow-down.svg"},
+  };
+
+  for (size_t i = 0; i < sizeof(icon_map) / sizeof(icon_map[0]); ++i) {
+    if (strcmp(key_name, icon_map[i].key_name) == 0) {
+      return icon_map[i].icon_name;
+    }
+  }
+  return NULL;
+}
+
+static RsvgHandle *get_icon_svg(struct wsk_state *state, const char *icon_name) {
+  if (!state->icon_dir || !icon_name) {
+    return NULL;
+  }
+
+  for (struct icon_cache_entry *entry = state->icons; entry;
+       entry = entry->next) {
+    if (strcmp(entry->icon_name, icon_name) == 0) {
+      return entry->failed ? NULL : entry->svg;
+    }
+  }
+
+  struct icon_cache_entry *entry = calloc(1, sizeof(*entry));
+  if (!entry) {
+    return NULL;
+  }
+  entry->icon_name = xstrdup(icon_name);
+  if (!entry->icon_name) {
+    free(entry);
+    return NULL;
+  }
+
+  char *path = join_path3(state->icon_dir, "icons", icon_name);
+  if (!path) {
+    entry->failed = true;
+  } else {
+    GError *error = NULL;
+    entry->svg = rsvg_handle_new_from_file(path, &error);
+    if (!entry->svg) {
+      entry->failed = true;
+      if (error) {
+        g_error_free(error);
+      }
+    }
+    free(path);
+  }
+
+  entry->next = state->icons;
+  state->icons = entry;
+  return entry->failed ? NULL : entry->svg;
+}
+
+static void free_icon_cache(struct icon_cache_entry *icons) {
+  while (icons) {
+    struct icon_cache_entry *next = icons->next;
+    if (icons->svg) {
+      g_object_unref(icons->svg);
+    }
+    free(icons->icon_name);
+    free(icons);
+    icons = next;
+  }
+}
+
 static void draw_cairo_keycap(cairo_t *cairo, const struct keycap_layout *layout,
                               const struct keycap_style *style, int radius,
                               int border_width) {
@@ -148,26 +282,41 @@ static void draw_cairo_keycap(cairo_t *cairo, const struct keycap_layout *layout
   }
 }
 
-static bool draw_svg_keycap(cairo_t *cairo, RsvgHandle *svg,
-                            const struct keycap_layout *layout) {
+static bool draw_svg_to_rect(cairo_t *cairo, RsvgHandle *svg, double x,
+                             double y, double width, double height,
+                             const char *description) {
   RsvgRectangle viewport = {
-      .x = layout->x,
-      .y = layout->y,
-      .width = layout->width,
-      .height = layout->height,
+      .x = x,
+      .y = y,
+      .width = width,
+      .height = height,
   };
   GError *error = NULL;
   gboolean ok = rsvg_handle_render_document(svg, cairo, &viewport, &error);
   if (!ok) {
     if (error) {
-      fprintf(stderr, "Unable to render key SVG: %s\n", error->message);
+      fprintf(stderr, "Unable to render %s SVG: %s\n", description,
+              error->message);
       g_error_free(error);
     } else {
-      fprintf(stderr, "Unable to render key SVG\n");
+      fprintf(stderr, "Unable to render %s SVG\n", description);
     }
     return false;
   }
   return true;
+}
+
+static bool draw_svg_keycap(cairo_t *cairo, RsvgHandle *svg,
+                            const struct keycap_layout *layout) {
+  return draw_svg_to_rect(cairo, svg, layout->x, layout->y, layout->width,
+                          layout->height, "key");
+}
+
+static bool draw_svg_icon(cairo_t *cairo, RsvgHandle *svg,
+                          const struct keycap_layout *layout,
+                          int icon_size) {
+  return draw_svg_to_rect(cairo, svg, layout->icon_x, layout->icon_y, icon_size,
+                          icon_size, "icon");
 }
 
 static cairo_subpixel_order_t
@@ -195,6 +344,7 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
       .gap = 6,
       .radius = 8,
       .border_width = 1,
+      .icon_size = 20,
       .normal_bg = 0x222222CC,
       .normal_fg = state->foreground,
       .special_bg = 0x444444CC,
@@ -225,6 +375,7 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
   const int gap = style.gap * scale;
   const int radius = style.radius * scale;
   const int border_width = style.border_width * scale;
+  const int icon_size = style.icon_size * scale;
 
   size_t i = 0;
   int x = 0;
@@ -234,12 +385,16 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
     layout->key = key;
     layout->special = key->utf8[0] == '\0';
     layout->label = layout->special ? key->name : key->utf8;
+    layout->icon_name = layout->special ? special_icon_name(key->name) : NULL;
+    layout->icon_svg = get_icon_svg(state, layout->icon_name);
     get_text_size(cairo, state->font, &layout->text_width,
                   &layout->text_height, &layout->text_baseline, scale, "%s",
                   layout->label);
+    int content_width = layout->icon_svg ? icon_size : layout->text_width;
+    int content_height = layout->icon_svg ? icon_size : layout->text_height;
     layout->x = x;
-    layout->width = layout->text_width + padding_x * 2;
-    layout->height = layout->text_height + padding_y * 2;
+    layout->width = content_width + padding_x * 2;
+    layout->height = content_height + padding_y * 2;
     x += layout->width + gap;
     if (max_height < layout->height) {
       max_height = layout->height;
@@ -262,9 +417,18 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
       draw_cairo_keycap(cairo, layout, &style, radius, border_width);
     }
 
+    if (layout->icon_svg) {
+      layout->icon_x = layout->x + (layout->width - icon_size) / 2;
+      layout->icon_y = layout->y + (layout->height - icon_size) / 2;
+      draw_svg_icon(cairo, layout->icon_svg, layout, icon_size);
+      continue;
+    }
+
+    layout->text_x = layout->x + padding_x;
+    layout->text_y = layout->y + padding_y;
     cairo_set_source_u32(cairo,
                          layout->special ? style.special_fg : style.normal_fg);
-    cairo_move_to(cairo, layout->x + padding_x, layout->y + padding_y);
+    cairo_move_to(cairo, layout->text_x, layout->text_y);
     pango_printf(cairo, state->font, scale, "%s", layout->label);
   }
 
@@ -789,6 +953,11 @@ int main(int argc, char *argv[]) {
   }
 
   if (state.key_svg_path) {
+    state.icon_dir = path_dirname(state.key_svg_path);
+    if (!state.icon_dir) {
+      fprintf(stderr, "Unable to allocate icon directory path\n");
+    }
+
     GError *error = NULL;
     state.key_svg = rsvg_handle_new_from_file(state.key_svg_path, &error);
     if (!state.key_svg) {
@@ -926,6 +1095,8 @@ int main(int argc, char *argv[]) {
   }
 
 exit:
+  free_icon_cache(state.icons);
+  free(state.icon_dir);
   if (state.key_svg) {
     g_object_unref(state.key_svg);
   }
