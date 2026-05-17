@@ -24,7 +24,7 @@ struct pool_buffer {
 };
 
 struct pool_buffer *get_next_buffer(struct wl_shm *shm,
-                                    struct pool_buffer pool[static2],
+                                    struct pool_buffer pool[2],
                                     uint32_t width, uint32_t height);
 
 void destroy_buffer(struct pool_buffer *buffer);
