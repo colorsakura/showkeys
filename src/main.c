@@ -56,7 +56,9 @@ struct wsk_state {
   struct wl_surface *surface;
   struct zwlr_layer_surface_v1 *layer_surface;
   uint32_t width, height;
-  bool layer_configured, frame_scheduled, dirty;
+  bool layer_configured, layer_pending_configure, frame_scheduled, dirty;
+  uint32_t anchor;
+  int margin;
   struct pool_buffer buffers[2];
   struct pool_buffer *current_buffer;
   struct wsk_output *output, *outputs;
@@ -132,6 +134,49 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
   }
 }
 
+static const struct wl_surface_listener wl_surface_listener;
+static const struct zwlr_layer_surface_v1_listener layer_surface_listener;
+
+static void destroy_layer_surface(struct wsk_state *state) {
+  if (state->layer_surface) {
+    zwlr_layer_surface_v1_destroy(state->layer_surface);
+    state->layer_surface = NULL;
+  }
+  if (state->surface) {
+    wl_surface_destroy(state->surface);
+    state->surface = NULL;
+  }
+  state->output = NULL;
+  state->width = 0;
+  state->height = 0;
+  state->layer_configured = false;
+  state->layer_pending_configure = false;
+}
+
+static bool create_layer_surface(struct wsk_state *state) {
+  if (state->surface) {
+    return true;
+  }
+
+  state->surface = wl_compositor_create_surface(state->compositor);
+  if (!state->surface) {
+    return false;
+  }
+  wl_surface_add_listener(state->surface, &wl_surface_listener, state);
+
+  state->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
+      state->layer_shell, state->surface, NULL, ZWLR_LAYER_SHELL_V1_LAYER_TOP,
+      "showkeys");
+  if (!state->layer_surface) {
+    wl_surface_destroy(state->surface);
+    state->surface = NULL;
+    return false;
+  }
+  zwlr_layer_surface_v1_add_listener(state->layer_surface,
+                                     &layer_surface_listener, state);
+  return true;
+}
+
 static void render_frame(struct wsk_state *state) {
   cairo_surface_t *recorder =
       cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, NULL);
@@ -158,7 +203,7 @@ static void render_frame(struct wsk_state *state) {
       state->width == 0) {
     // Reconfigure surface
     if (width == 0 || height == 0) {
-      wl_surface_attach(state->surface, NULL, 0, 0);
+      destroy_layer_surface(state);
     } else {
       zwlr_layer_surface_v1_set_size(state->layer_surface, width / scale,
                                      height / scale);
@@ -166,7 +211,9 @@ static void render_frame(struct wsk_state *state) {
 
     // TODO: this could infinite loop if the compositor assigns us a
     // different height than what we asked for
-    wl_surface_commit(state->surface);
+    if (state->surface) {
+      wl_surface_commit(state->surface);
+    }
   } else if (height > 0) {
     // Replay recording into shm and send it off
     state->current_buffer =
@@ -194,9 +241,30 @@ static void render_frame(struct wsk_state *state) {
   }
 }
 
+static void request_layer_configure(struct wsk_state *state) {
+  if (state->layer_pending_configure || !state->keys) {
+    return;
+  }
+  if (!create_layer_surface(state)) {
+    return;
+  }
+
+  zwlr_layer_surface_v1_set_size(state->layer_surface, 1, 1);
+  zwlr_layer_surface_v1_set_anchor(state->layer_surface, state->anchor);
+  zwlr_layer_surface_v1_set_margin(state->layer_surface, state->margin,
+                                   state->margin, state->margin,
+                                   state->margin);
+  zwlr_layer_surface_v1_set_exclusive_zone(state->layer_surface, -1);
+  wl_surface_commit(state->surface);
+  state->layer_pending_configure = true;
+}
+
 static void set_dirty(struct wsk_state *state) {
   if (state->frame_scheduled || !state->layer_configured) {
     state->dirty = true;
+    if (!state->layer_configured) {
+      request_layer_configure(state);
+    }
   } else if (state->surface) {
     state->dirty = false;
     render_frame(state);
@@ -211,6 +279,7 @@ layer_surface_configure(void *data,
   state->width = width;
   state->height = height;
   state->layer_configured = true;
+  state->layer_pending_configure = false;
   zwlr_layer_surface_v1_ack_configure(zwlr_layer_surface_v1, serial);
   set_dirty(state);
 }
@@ -511,8 +580,8 @@ int main(int argc, char *argv[]) {
   /* Begin normal user code: */
   int ret = 0;
 
-  unsigned int anchor = 0;
-  int margin = 32;
+  state.anchor = 0;
+  state.margin = 32;
   state.background = 0x000000CC;
   state.specialfg = 0xAAAAAAFF;
   state.foreground = 0xFFFFFFFF;
@@ -539,33 +608,33 @@ int main(int argc, char *argv[]) {
       break;
     case 'a':
       if (strcmp(optarg, "top-right") == 0) {
-        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-                 ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                       ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
       } else if (strcmp(optarg, "top-center") == 0) {
-        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
+        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
       } else if (strcmp(optarg, "top-left") == 0) {
-        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-                 ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
+        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                       ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
       } else if (strcmp(optarg, "bottom-right") == 0) {
-        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-                 ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+                       ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
       } else if (strcmp(optarg, "bottom-center") == 0) {
-        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
       } else if (strcmp(optarg, "bottom-left") == 0) {
-        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-                 ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
+        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+                       ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
       } else if (strcmp(optarg, "center-right") == 0) {
-        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
       } else if (strcmp(optarg, "center-left") == 0) {
-        anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
+        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
       } else if (strcmp(optarg, "center") == 0) {
-        anchor = 0;
+        state.anchor = 0;
       } else {
         fprintf(stderr, "Invalid anchor value '%s'\n", optarg);
       }
       break;
     case 'm':
-      margin = atoi(optarg);
+      state.margin = atoi(optarg);
       break;
     case 'o':
       fprintf(stderr, "-o is unimplemented\n");
@@ -636,23 +705,6 @@ int main(int argc, char *argv[]) {
   wl_seat_add_listener(state.seat, &wl_seat_listener, &state);
   wl_display_roundtrip(state.display);
 
-  state.surface = wl_compositor_create_surface(state.compositor);
-  assert(state.surface);
-  wl_surface_add_listener(state.surface, &wl_surface_listener, &state);
-
-  state.layer_surface = zwlr_layer_shell_v1_get_layer_surface(
-      state.layer_shell, state.surface, NULL, ZWLR_LAYER_SHELL_V1_LAYER_TOP,
-      "showkeys");
-  assert(state.layer_surface);
-  zwlr_layer_surface_v1_add_listener(state.layer_surface,
-                                     &layer_surface_listener, &state);
-  zwlr_layer_surface_v1_set_size(state.layer_surface, 1, 1);
-  zwlr_layer_surface_v1_set_anchor(state.layer_surface, anchor);
-  zwlr_layer_surface_v1_set_margin(state.layer_surface, margin, margin, margin,
-                                   margin);
-  zwlr_layer_surface_v1_set_exclusive_zone(state.layer_surface, -1);
-  wl_surface_commit(state.surface);
-
   struct pollfd pollfds[] = {
       {
           .fd = libinput_get_fd(state.libinput),
@@ -687,8 +739,9 @@ int main(int argc, char *argv[]) {
     /* Clear out old keys */
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    if (now.tv_sec >= state.last_key.tv_sec + state.timeout &&
-        now.tv_nsec >= state.last_key.tv_nsec) {
+    if (now.tv_sec > state.last_key.tv_sec + state.timeout ||
+        (now.tv_sec == state.last_key.tv_sec + state.timeout &&
+         now.tv_nsec >= state.last_key.tv_nsec)) {
       struct wsk_keypress *key = state.keys;
       while (key) {
         struct wsk_keypress *next = key->next;
