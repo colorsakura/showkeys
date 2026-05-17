@@ -9,6 +9,7 @@
 #include <getopt.h>
 #include <libinput.h>
 #include <libudev.h>
+#include <librsvg/rsvg.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -70,6 +71,9 @@ struct wsk_state {
   uint32_t foreground, background, specialfg;
   const char *font;
   int timeout;
+  const char *key_svg_path;
+  RsvgHandle *key_svg;
+  bool key_svg_failed;
 
   struct wl_display *display;
   struct wl_registry *registry;
@@ -124,6 +128,46 @@ static void rounded_rectangle(cairo_t *cairo, double x, double y, double w,
   cairo_arc(cairo, x + r, y + r, r, 3.141592653589793,
             4.71238898038469);
   cairo_close_path(cairo);
+}
+
+static void draw_cairo_keycap(cairo_t *cairo, const struct keycap_layout *layout,
+                              const struct keycap_style *style, int radius,
+                              int border_width) {
+  rounded_rectangle(cairo, layout->x, layout->y, layout->width, layout->height,
+                    radius);
+  cairo_set_source_u32(cairo, layout->special ? style->special_bg
+                                              : style->normal_bg);
+  cairo_fill_preserve(cairo);
+
+  if (border_width > 0) {
+    cairo_set_line_width(cairo, border_width);
+    cairo_set_source_u32(cairo, style->border);
+    cairo_stroke(cairo);
+  } else {
+    cairo_new_path(cairo);
+  }
+}
+
+static bool draw_svg_keycap(cairo_t *cairo, RsvgHandle *svg,
+                            const struct keycap_layout *layout) {
+  RsvgRectangle viewport = {
+      .x = layout->x,
+      .y = layout->y,
+      .width = layout->width,
+      .height = layout->height,
+  };
+  GError *error = NULL;
+  gboolean ok = rsvg_handle_render_document(svg, cairo, &viewport, &error);
+  if (!ok) {
+    if (error) {
+      fprintf(stderr, "Unable to render key SVG: %s\n", error->message);
+      g_error_free(error);
+    } else {
+      fprintf(stderr, "Unable to render key SVG\n");
+    }
+    return false;
+  }
+  return true;
 }
 
 static cairo_subpixel_order_t
@@ -209,18 +253,13 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
     struct keycap_layout *layout = &layouts[i];
     layout->y = (max_height - layout->height) / 2;
 
-    rounded_rectangle(cairo, layout->x, layout->y, layout->width,
-                      layout->height, radius);
-    cairo_set_source_u32(cairo,
-                         layout->special ? style.special_bg : style.normal_bg);
-    cairo_fill_preserve(cairo);
-
-    if (border_width > 0) {
-      cairo_set_line_width(cairo, border_width);
-      cairo_set_source_u32(cairo, style.border);
-      cairo_stroke(cairo);
-    } else {
-      cairo_new_path(cairo);
+    if (!state->key_svg || state->key_svg_failed ||
+        !draw_svg_keycap(cairo, state->key_svg, layout)) {
+      if (state->key_svg && !state->key_svg_failed) {
+        fprintf(stderr, "Falling back to Cairo keycap background\n");
+        state->key_svg_failed = true;
+      }
+      draw_cairo_keycap(cairo, layout, &style, radius, border_width);
     }
 
     cairo_set_source_u32(cairo,
@@ -688,7 +727,7 @@ int main(int argc, char *argv[]) {
   state.timeout = 1;
 
   int c;
-  while ((c = getopt(argc, argv, "hb:f:s:F:t:a:m:o:")) != -1) {
+  while ((c = getopt(argc, argv, "hb:f:s:F:t:a:m:o:k:")) != -1) {
     switch (c) {
     case 'b':
       state.background = parse_color(optarg);
@@ -738,11 +777,27 @@ int main(int argc, char *argv[]) {
     case 'o':
       fprintf(stderr, "-o is unimplemented\n");
       return 0;
+    case 'k':
+      state.key_svg_path = optarg;
+      break;
     default:
       fprintf(stderr, "usage: wshowkeys [-b|-f|-s #RRGGBB[AA]] [-F font] "
                       "[-t timeout]\n\t[-a top|left|right|bottom] [-m margin] "
-                      "[-o output]\n");
+                      "[-o output] [-k key.svg]\n");
       return 1;
+    }
+  }
+
+  if (state.key_svg_path) {
+    GError *error = NULL;
+    state.key_svg = rsvg_handle_new_from_file(state.key_svg_path, &error);
+    if (!state.key_svg) {
+      fprintf(stderr, "Unable to load key SVG '%s': %s\n", state.key_svg_path,
+              error ? error->message : "unknown error");
+      if (error) {
+        g_error_free(error);
+      }
+      state.key_svg_failed = true;
     }
   }
 
@@ -871,6 +926,9 @@ int main(int argc, char *argv[]) {
   }
 
 exit:
+  if (state.key_svg) {
+    g_object_unref(state.key_svg);
+  }
   wl_display_disconnect(state.display);
   libinput_unref(state.libinput);
   devmgr_finish(state.devmgr, state.devmgr_pid);

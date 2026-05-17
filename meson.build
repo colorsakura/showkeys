@@ -48,6 +48,7 @@ add_project_arguments(
 
 cairo = dependency('cairo')
 libinput = dependency('libinput')
+librsvg = dependency('librsvg-2.0')
 pango = dependency('pango')
 pangocairo = dependency('pangocairo')
 udev = dependency('libudev')
@@ -64,6 +65,7 @@ sk_deps = [
     cairo,
     client_protos,
     libinput,
+    librsvg,
     pango,
     pangocairo,
     rt,

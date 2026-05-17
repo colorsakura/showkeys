@@ -9,6 +9,7 @@ Dependencies:
 
 - cairo
 - libinput
+- librsvg
 - pango
 - udev 
 - wayland 
@@ -28,7 +29,7 @@ permissions to read input events. These permissions are dropped after startup.
 
 ```
 showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] [-t timeout]
-    [-a top|left|right|bottom] [-m margin] [-o output]
+    [-a top|left|right|bottom] [-m margin] [-o output] [-k key.svg]
 ```
 
 - *-b #RRGGBB[AA]*: set background color
@@ -41,3 +42,5 @@ showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] [-t timeout]
 - *-m margin*: set a margin (in pixels) from the nearest edge
 - *-o output*: request showkeys is shown on the specified output
   (unimplemented)
+- *-k key.svg*: draw each keycap background with an SVG file. If loading or
+  rendering fails, showkeys falls back to the built-in Cairo keycap background.
