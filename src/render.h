@@ -1,9 +1,9 @@
 #ifndef SHOWKEYS_RENDER_H
 #define SHOWKEYS_RENDER_H
 
-#include "app.h"
+struct wsk_app;
 
-void wsk_render_frame(struct wsk_state *state);
-void wsk_render_set_dirty(struct wsk_state *state);
+void wsk_render_frame(struct wsk_app *app);
+void wsk_render_set_dirty(struct wsk_app *app);
 
 #endif

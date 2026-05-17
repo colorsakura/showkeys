@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const c_sources = [_][]const u8{
+    "app.c",
     "color.c",
     "config.c",
     "devmgr.c",

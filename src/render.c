@@ -1,7 +1,10 @@
+#include "app.h"
 #include "render.h"
 
 #include "keycap.h"
 #include "wayland.h"
+#include "shm.h"
+#include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 #include <cairo/cairo.h>
 
@@ -22,7 +25,7 @@ to_cairo_subpixel_order(enum wl_output_subpixel subpixel) {
   return CAIRO_SUBPIXEL_ORDER_DEFAULT;
 }
 
-void wsk_render_frame(struct wsk_state *state) {
+void wsk_render_frame(struct wsk_app *app) {
   cairo_surface_t *recorder =
       cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, NULL);
   cairo_t *cairo = cairo_create(recorder);
@@ -30,9 +33,9 @@ void wsk_render_frame(struct wsk_state *state) {
   cairo_font_options_t *fo = cairo_font_options_create();
   cairo_font_options_set_hint_style(fo, CAIRO_HINT_STYLE_FULL);
   cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_SUBPIXEL);
-  if (state->output) {
+  if (app->output) {
     cairo_font_options_set_subpixel_order(
-        fo, to_cairo_subpixel_order(state->output->subpixel));
+        fo, to_cairo_subpixel_order(app->output->subpixel));
   }
   cairo_set_font_options(cairo, fo);
   cairo_font_options_destroy(fo);
@@ -41,38 +44,38 @@ void wsk_render_frame(struct wsk_state *state) {
   cairo_paint(cairo);
   cairo_restore(cairo);
 
-  int scale = state->output ? state->output->scale : 1;
+  int scale = app->output ? app->output->scale : 1;
   uint32_t width = 0, height = 0;
-  wsk_render_keycaps_to_cairo(cairo, state->keys, &state->config, &state->icons,
-                              state->icon_dir, state->key_svg,
-                              &state->key_svg_failed, scale, &width,
+  wsk_render_keycaps_to_cairo(cairo, app->keys, &app->config, &app->icons,
+                              app->icon_dir, app->key_svg,
+                              &app->key_svg_failed, scale, &width,
                               &height);
-  if (height / scale != state->height || width / scale != state->width ||
-      state->width == 0) {
+  if (height / scale != app->height || width / scale != app->width ||
+      app->width == 0) {
     // Reconfigure surface
     if (width == 0 || height == 0) {
-      wsk_wayland_destroy_layer_surface(state);
+      wsk_wayland_destroy_layer_surface(app);
     } else {
-      zwlr_layer_surface_v1_set_size(state->layer_surface, width / scale,
+      zwlr_layer_surface_v1_set_size(app->layer_surface, width / scale,
                                      height / scale);
     }
 
     // TODO: this could infinite loop if the compositor assigns us a
     // different height than what we asked for
-    if (state->surface) {
-      wl_surface_commit(state->surface);
+    if (app->surface) {
+      wl_surface_commit(app->surface);
     }
   } else if (height > 0) {
     // Replay recording into shm and send it off
-    state->current_buffer =
-        get_next_buffer(state->shm, state->buffers, state->width * scale,
-                        state->height * scale);
-    if (!state->current_buffer) {
+    app->current_buffer =
+        get_next_buffer(app->shm, app->buffers, app->width * scale,
+                        app->height * scale);
+    if (!app->current_buffer) {
       cairo_surface_destroy(recorder);
       cairo_destroy(cairo);
       return;
     }
-    cairo_t *shm = state->current_buffer->cairo;
+    cairo_t *shm = app->current_buffer->cairo;
 
     cairo_save(shm);
     cairo_set_operator(shm, CAIRO_OPERATOR_CLEAR);
@@ -82,11 +85,11 @@ void wsk_render_frame(struct wsk_state *state) {
     cairo_set_source_surface(shm, recorder, 0.0, 0.0);
     cairo_paint(shm);
 
-    wl_surface_set_buffer_scale(state->surface, scale);
-    wl_surface_attach(state->surface, state->current_buffer->buffer, 0, 0);
-    wl_surface_damage_buffer(state->surface, 0, 0, state->width * scale,
-                             state->height * scale);
-    wl_surface_commit(state->surface);
+    wl_surface_set_buffer_scale(app->surface, scale);
+    wl_surface_attach(app->surface, app->current_buffer->buffer, 0, 0);
+    wl_surface_damage_buffer(app->surface, 0, 0, app->width * scale,
+                             app->height * scale);
+    wl_surface_commit(app->surface);
   }
 }
 
