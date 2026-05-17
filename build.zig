@@ -13,6 +13,7 @@ const c_sources = [_][]const u8{
     "render.c",
     "shm.c",
     "theme.c",
+    "wayland.c",
 };
 
 const pkg_config_deps = [_][]const u8{

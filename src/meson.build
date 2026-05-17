@@ -13,4 +13,5 @@ sk_src = files(
   'render.c',
   'shm.c',
   'theme.c',
+  'wayland.c',
 )

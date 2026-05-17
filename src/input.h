@@ -18,4 +18,7 @@ void wsk_input_set_keymap(struct wsk_state *state,
                           struct xkb_keymap *keymap,
                           struct xkb_state *xkb_state);
 
+void wsk_input_set_keymap_from_fd(struct wsk_state *state, uint32_t format,
+                                  int32_t fd, uint32_t size);
+
 #endif // WSK_INPUT_H

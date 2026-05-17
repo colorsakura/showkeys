@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 
 static const char *pointer_button_name(uint32_t button) {
@@ -138,3 +139,28 @@ const struct libinput_interface wsk_libinput_impl = {
     .open_restricted = libinput_open_restricted,
     .close_restricted = libinput_close_restricted,
 };
+
+void wsk_input_set_keymap_from_fd(struct wsk_state *state, uint32_t format,
+                                  int32_t fd, uint32_t size) {
+	char *map_shm = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+	if (map_shm == MAP_FAILED) {
+		close(fd);
+		fprintf(stderr, "Unable to mmap keymap: %s", strerror(errno));
+		return;
+	}
+	if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) {
+		munmap(map_shm, size);
+		close(fd);
+		return;
+	}
+
+	struct xkb_keymap *keymap = xkb_keymap_new_from_string(
+	    state->xkb_context, map_shm, XKB_KEYMAP_FORMAT_TEXT_V1,
+	    XKB_KEYMAP_COMPILE_NO_FLAGS);
+	munmap(map_shm, size);
+	close(fd);
+
+	struct xkb_state *xkb_state = xkb_state_new(keymap);
+	wsk_input_set_keymap(state, keymap, xkb_state);
+}
+

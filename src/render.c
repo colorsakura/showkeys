@@ -51,7 +51,7 @@ void wsk_render_frame(struct wsk_state *state) {
       state->width == 0) {
     // Reconfigure surface
     if (width == 0 || height == 0) {
-      destroy_layer_surface(state);
+      wsk_wayland_destroy_layer_surface(state);
     } else {
       zwlr_layer_surface_v1_set_size(state->layer_surface, width / scale,
                                      height / scale);
