@@ -52,50 +52,13 @@ bool wsk_app_init(struct wsk_app *app, int argc, char *argv[]) {
         return true;
     }
 
-    if (app->config.key_svg_path) {
-        app->icon_dir = wsk_path_dirname(app->config.key_svg_path);
-        if (!app->icon_dir) {
-            fprintf(stderr,
-                    "Unable to allocate icon directory path\n");
-        }
+    wsk_theme_init(&app->theme, app->config.key_svg_path);
 
-        GError *error = NULL;
-        app->key_svg = rsvg_handle_new_from_file(
-            app->config.key_svg_path, &error);
-        if (!app->key_svg) {
-            fprintf(stderr, "Unable to load key SVG '%s': %s\n",
-                    app->config.key_svg_path,
-                    error ? error->message : "unknown error");
-            if (error) {
-                g_error_free(error);
-            }
-            app->key_svg_failed = true;
-        }
-    }
-
-    app->udev = udev_new();
-    if (!app->udev) {
-        fprintf(stderr, "udev_create: %s\n", strerror(errno));
+    if (!wsk_input_init(&app->input, app)) {
         return false;
     }
 
-    app->libinput = libinput_udev_create_context(&wsk_libinput_impl,
-                                                 &app->devmgr, app->udev);
-    udev_unref(app->udev);
-    app->udev = NULL; // udev is no longer needed after context creation
-    if (!app->libinput) {
-        fprintf(stderr, "libinput_udev_create_context: %s\n",
-                strerror(errno));
-        return false;
-    }
-
-    app->xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-    if (!app->xkb_context) {
-        fprintf(stderr, "xkb_context_new: %s\n", strerror(errno));
-        return false;
-    }
-
-    if (!wsk_wayland_init(app)) {
+    if (!wsk_wayland_init(&app->wayland, app)) {
         return false;
     }
 
@@ -109,11 +72,11 @@ int wsk_app_run(struct wsk_app *app) {
 
     struct pollfd pollfds[] = {
         {
-            .fd = libinput_get_fd(app->libinput),
+            .fd = wsk_input_get_fd(&app->input),
             .events = POLLIN,
         },
         {
-            .fd = wsk_wayland_get_fd(app),
+            .fd = wsk_wayland_get_fd(&app->wayland),
             .events = POLLIN,
         },
     };
@@ -122,7 +85,7 @@ int wsk_app_run(struct wsk_app *app) {
     while (app->run) {
         errno = 0;
         do {
-            if (wsk_wayland_flush(app) == -1) {
+            if (wsk_wayland_flush(&app->wayland) == -1) {
                 fprintf(stderr, "wl_display_flush: %s\n",
                         strerror(errno));
                 break;
@@ -133,7 +96,7 @@ int wsk_app_run(struct wsk_app *app) {
         }
 
         int timeout = -1;
-        if (app->keys) {
+        if (app->keys.head) {
             timeout = 100;
         }
 
@@ -146,21 +109,20 @@ int wsk_app_run(struct wsk_app *app) {
         /* Clear out old keys */
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
-        if (wsk_keys_expired(app->keys, app->last_key,
-                             app->config.timeout, now)) {
+        if (wsk_keys_expired(&app->keys, app->config.timeout, now)) {
             wsk_keys_clear(&app->keys);
             wsk_wayland_set_dirty(app);
         }
 
         if ((pollfds[0].revents & POLLIN)) {
-            if (libinput_dispatch(app->libinput) != 0) {
+            if (libinput_dispatch(app->input.libinput) != 0) {
                 fprintf(stderr, "libinput_dispatch: %s\n",
                         strerror(errno));
                 break;
             }
             bool input_dirty = false;
             struct libinput_event *event;
-            while ((event = libinput_get_event(app->libinput))) {
+            while ((event = libinput_get_event(app->input.libinput))) {
                 wsk_input_handle_libinput_event(
                     app, event, &input_dirty);
                 libinput_event_destroy(event);
@@ -171,7 +133,7 @@ int wsk_app_run(struct wsk_app *app) {
         }
 
         if ((pollfds[1].revents & POLLIN) &&
-            wsk_wayland_dispatch(app) == -1) {
+            wsk_wayland_dispatch(&app->wayland, app) == -1) {
             fprintf(stderr, "wl_display_dispatch: %s\n",
                     strerror(errno));
             break;
@@ -185,18 +147,10 @@ void wsk_app_finish(struct wsk_app *app) {
         return;
     }
 
-    wsk_icon_cache_finish(&app->icons);
-    free(app->icon_dir);
-    if (app->key_svg) {
-        g_object_unref(app->key_svg);
-    }
-    wsk_wayland_finish(app);
-    if (app->libinput) {
-        libinput_unref(app->libinput);
-    }
-    if (app->xkb_context) {
-        xkb_context_unref(app->xkb_context);
-    }
+    wsk_keys_clear(&app->keys);
+    wsk_theme_finish(&app->theme);
+    wsk_input_finish(&app->input);
+    wsk_wayland_finish(&app->wayland);
     devmgr_finish(app->devmgr, app->devmgr_pid);
     free(app);
 }

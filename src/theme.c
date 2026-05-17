@@ -1,8 +1,42 @@
 #include "theme.h"
 
+#include <librsvg/rsvg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+bool wsk_theme_init(struct wsk_theme *theme, const char *key_svg_path) {
+    memset(theme, 0, sizeof(*theme));
+    theme->key_svg_path = key_svg_path;
+
+    if (key_svg_path) {
+        theme->base_dir = wsk_path_dirname(key_svg_path);
+        if (!theme->base_dir) {
+            fprintf(stderr, "Unable to allocate icon directory path\\n");
+        }
+
+        GError *error = NULL;
+        theme->key_svg = rsvg_handle_new_from_file(key_svg_path, &error);
+        if (!theme->key_svg) {
+            fprintf(stderr, "Unable to load key SVG '%s': %s\\n", key_svg_path,
+                    error ? error->message : "unknown error");
+            if (error) {
+                g_error_free(error);
+            }
+            theme->key_svg_failed = true;
+        }
+    }
+    return true;
+}
+
+void wsk_theme_finish(struct wsk_theme *theme) {
+    wsk_icon_cache_finish(&theme->icons);
+    free(theme->base_dir);
+    if (theme->key_svg) {
+        g_object_unref(theme->key_svg);
+    }
+}
+
 
 char *wsk_xstrdup(const char *str) {
     size_t len = strlen(str) + 1;

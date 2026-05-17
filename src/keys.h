@@ -12,12 +12,17 @@ struct wsk_keypress {
     struct wsk_keypress *next;
 };
 
-void wsk_keys_append(struct wsk_keypress **head, struct wsk_keypress *keypress,
-                     int max_keys);
+struct wsk_key_list {
+    struct wsk_keypress *head;
+    struct timespec last_key;
+};
 
-void wsk_keys_clear(struct wsk_keypress **head);
+void wsk_keys_append(struct wsk_key_list *keys, struct wsk_keypress *keypress,
+                     int max_keys, const struct timespec *now);
 
-bool wsk_keys_expired(struct wsk_keypress *head, struct timespec last_key,
-                      int timeout, struct timespec now);
+void wsk_keys_clear(struct wsk_key_list *keys);
+
+bool wsk_keys_expired(const struct wsk_key_list *keys, int timeout,
+                      struct timespec now);
 
 #endif

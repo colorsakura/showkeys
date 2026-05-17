@@ -15,6 +15,66 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
+static int libinput_open_restricted(const char *path, int flags, void *data) {
+    int *fd = data;
+    return devmgr_open(*fd, path);
+}
+
+static void libinput_close_restricted(int fd, void *data) { close(fd); }
+
+static const struct libinput_interface wsk_libinput_impl = {
+    .open_restricted = libinput_open_restricted,
+    .close_restricted = libinput_close_restricted,
+};
+
+bool wsk_input_init(struct wsk_input *input, struct wsk_app *app) {
+    memset(input, 0, sizeof(*input));
+
+    input->udev = udev_new();
+    if (!input->udev) {
+        fprintf(stderr, "udev_create: %s\n", strerror(errno));
+        return false;
+    }
+
+    input->libinput = libinput_udev_create_context(&wsk_libinput_impl,
+                                                   &app->devmgr, input->udev);
+    if (!input->libinput) {
+        fprintf(stderr, "libinput_udev_create_context: %s\n",
+                strerror(errno));
+        udev_unref(input->udev);
+        input->udev = NULL;
+        return false;
+    }
+    udev_unref(input->udev);
+    input->udev = NULL;
+
+    input->xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    if (!input->xkb_context) {
+        fprintf(stderr, "xkb_context_new: %s\n", strerror(errno));
+        return false;
+    }
+
+    return true;
+}
+
+void wsk_input_finish(struct wsk_input *input) {
+    if (input->libinput) {
+        libinput_unref(input->libinput);
+    }
+    if (input->xkb_context) {
+        xkb_context_unref(input->xkb_context);
+    }
+    if (input->xkb_keymap) {
+        xkb_keymap_unref(input->xkb_keymap);
+    }
+    if (input->xkb_state) {
+        xkb_state_unref(input->xkb_state);
+    }
+}
+
+int wsk_input_get_fd(struct wsk_input *input) {
+    return libinput_get_fd(input->libinput);
+}
 
 static const char *pointer_button_name(uint32_t button) {
     switch (button) {
@@ -40,19 +100,20 @@ static const char *pointer_button_name(uint32_t button) {
 static void handle_keyboard_key_event(struct wsk_app *app,
                                       struct libinput_event_keyboard *kbevent,
                                       bool *dirty) {
-    if (!app->xkb_state) {
+    struct wsk_input *input = &app->input;
+    if (!input->xkb_state) {
         return;
     }
 
     uint32_t keycode = libinput_event_keyboard_get_key(kbevent) + 8;
     enum libinput_key_state key_state =
             libinput_event_keyboard_get_key_state(kbevent);
-    xkb_state_update_key(app->xkb_state, keycode,
+    xkb_state_update_key(input->xkb_state, keycode,
                          key_state == LIBINPUT_KEY_STATE_RELEASED
                              ? XKB_KEY_UP
                              : XKB_KEY_DOWN);
 
-    xkb_keysym_t keysym = xkb_state_key_get_one_sym(app->xkb_state, keycode);
+    xkb_keysym_t keysym = xkb_state_key_get_one_sym(input->xkb_state, keycode);
 
     struct wsk_keypress *keypress;
     switch (key_state) {
@@ -64,13 +125,14 @@ static void handle_keyboard_key_event(struct wsk_app *app,
             assert(keypress);
             keypress->sym = keysym;
             xkb_keysym_get_name(keypress->sym, keypress->name, sizeof(keypress->name));
-            if (xkb_state_key_get_utf8(app->xkb_state, keycode, keypress->utf8,
+            if (xkb_state_key_get_utf8(input->xkb_state, keycode, keypress->utf8,
                                        sizeof(keypress->utf8)) <= 0 ||
                 keypress->utf8[0] <= ' ') {
                 keypress->utf8[0] = '\0';
             }
-            wsk_keys_append(&app->keys, keypress, app->config.max_keys);
-            clock_gettime(CLOCK_MONOTONIC, &app->last_key);
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            wsk_keys_append(&app->keys, keypress, app->config.max_keys, &now);
             *dirty = true;
             break;
     }
@@ -98,8 +160,9 @@ static void handle_pointer_button_event(struct wsk_app *app,
         snprintf(keypress->name, sizeof(keypress->name), "Mouse 0x%x", button);
     }
 
-    wsk_keys_append(&app->keys, keypress, app->config.max_keys);
-    clock_gettime(CLOCK_MONOTONIC, &app->last_key);
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    wsk_keys_append(&app->keys, keypress, app->config.max_keys, &now);
     *dirty = true;
 }
 
@@ -120,28 +183,16 @@ void wsk_input_handle_libinput_event(struct wsk_app *app,
     }
 }
 
-void wsk_input_set_keymap(struct wsk_app *app,
+void wsk_input_set_keymap(struct wsk_input *input,
                           struct xkb_keymap *keymap,
                           struct xkb_state *xkb_state) {
-    xkb_keymap_unref(app->xkb_keymap);
-    xkb_state_unref(app->xkb_state);
-    app->xkb_keymap = keymap;
-    app->xkb_state = xkb_state;
+    xkb_keymap_unref(input->xkb_keymap);
+    xkb_state_unref(input->xkb_state);
+    input->xkb_keymap = keymap;
+    input->xkb_state = xkb_state;
 }
 
-static int libinput_open_restricted(const char *path, int flags, void *data) {
-    int *fd = data;
-    return devmgr_open(*fd, path);
-}
-
-static void libinput_close_restricted(int fd, void *data) { close(fd); }
-
-const struct libinput_interface wsk_libinput_impl = {
-    .open_restricted = libinput_open_restricted,
-    .close_restricted = libinput_close_restricted,
-};
-
-void wsk_input_set_keymap_from_fd(struct wsk_app *app, uint32_t format,
+void wsk_input_set_keymap_from_fd(struct wsk_input *input, uint32_t format,
                                   int32_t fd, uint32_t size) {
     char *map_shm = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
     if (map_shm == MAP_FAILED) {
@@ -156,12 +207,11 @@ void wsk_input_set_keymap_from_fd(struct wsk_app *app, uint32_t format,
     }
 
     struct xkb_keymap *keymap = xkb_keymap_new_from_string(
-        app->xkb_context, map_shm, XKB_KEYMAP_FORMAT_TEXT_V1,
+        input->xkb_context, map_shm, XKB_KEYMAP_FORMAT_TEXT_V1,
         XKB_KEYMAP_COMPILE_NO_FLAGS);
     munmap(map_shm, size);
     close(fd);
 
     struct xkb_state *xkb_state = xkb_state_new(keymap);
-    wsk_input_set_keymap(app, keymap, xkb_state);
+    wsk_input_set_keymap(input, keymap, xkb_state);
 }
-

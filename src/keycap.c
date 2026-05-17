@@ -93,9 +93,7 @@ static bool draw_svg_icon(cairo_t *cairo, RsvgHandle *svg,
 
 void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys,
                                  const struct wsk_config *config,
-                                 struct wsk_icon_cache *icons,
-                                 const char *icon_dir, RsvgHandle *key_svg,
-                                 bool *key_svg_failed, int scale,
+                                 struct wsk_theme *theme, int scale,
                                  uint32_t *width, uint32_t *height) {
     const struct keycap_style style = {
         .padding_x = 12,
@@ -156,7 +154,7 @@ void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys
         layout->special = key->utf8[0] == '\0';
         layout->label = layout->special ? key->name : key->utf8;
         layout->icon_name = layout->special ? wsk_special_icon_name(key->name) : NULL;
-        layout->icon_svg = wsk_icon_cache_get(icons, icon_dir,
+        layout->icon_svg = wsk_icon_cache_get(&theme->icons, theme->base_dir,
                                               layout->icon_name);
         get_text_size(cairo, config->font, &layout->text_width,
                       &layout->text_height, &layout->text_baseline, scale, "%s",
@@ -209,11 +207,11 @@ void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys
         layout->y = 0;
         x += layout->width + gap;
 
-        if (!key_svg || *key_svg_failed ||
-            !draw_svg_keycap(cairo, key_svg, layout)) {
-            if (key_svg && !*key_svg_failed) {
+        if (!theme->key_svg || theme->key_svg_failed ||
+            !draw_svg_keycap(cairo, theme->key_svg, layout)) {
+            if (theme->key_svg && !theme->key_svg_failed) {
                 fprintf(stderr, "Falling back to Cairo keycap background\n");
-                *key_svg_failed = true;
+                theme->key_svg_failed = true;
             }
             draw_cairo_keycap(cairo, layout, &style, radius, border_width);
         }
@@ -235,4 +233,3 @@ void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys
 
     free(layouts);
 }
-
