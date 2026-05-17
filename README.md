@@ -46,5 +46,7 @@ showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] [-t timeout] [-n max-keys]
   rendering fails, showkeys falls back to the built-in Cairo keycap background.
   Special-key icons are loaded from an `icons/` directory next to `key.svg`
   when available, for example `icons/enter.svg`, `icons/backspace.svg`,
-  `icons/space.svg`, `icons/shift.svg`, `icons/ctrl.svg`, `icons/alt.svg`,
-  `icons/super.svg`, and `icons/arrow-left.svg`.
+  `icons/escape.svg`, `icons/tab.svg`, `icons/delete.svg`, `icons/home.svg`,
+  `icons/page-up.svg`, `icons/caps-lock.svg`, `icons/shift.svg`,
+  `icons/ctrl.svg`, `icons/super.svg`, `icons/arrow-left.svg`,
+  `icons/volume-up.svg`, and `icons/brightness.svg`.
