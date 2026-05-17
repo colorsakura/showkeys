@@ -125,7 +125,7 @@ static void devmgr_run(int sockfd, const char *devpath) {
 
 int devmgr_start(int *fd, pid_t *pid, const char *devpath) {
     if (geteuid() != 0) {
-        fprintf(stderr, "wshowkeys needs to be setuid to read input events\n");
+        fprintf(stderr, "showkeys needs to be setuid to read input events\n");
         return 1;
     }
 

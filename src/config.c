@@ -23,7 +23,7 @@ void wsk_config_init_defaults(struct wsk_config *config) {
 }
 
 void wsk_config_print_usage(FILE *stream) {
-    fprintf(stream, "usage: wshowkeys [-b|-f|-s #RRGGBB[AA]] [-F font] "
+    fprintf(stream, "usage: showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] "
             "[-t timeout] [-n max-keys]\n\t"
             "[-a top|left|right|bottom] [-m margin] "
             "[-o output] [-k key.svg]\n");
