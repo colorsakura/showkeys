@@ -1,4 +1,5 @@
 #include "color.h"
+#include "config.h"
 #include "devmgr.h"
 #include "icons.h"
 #include "keys.h"
@@ -10,7 +11,6 @@
 #include <assert.h>
 #include <cairo/cairo.h>
 #include <errno.h>
-#include <getopt.h>
 #include <libinput.h>
 #include <libudev.h>
 #include <linux/input-event-codes.h>
@@ -73,11 +73,7 @@ struct wsk_state {
   struct udev *udev;
   struct libinput *libinput;
 
-  uint32_t foreground, background, specialfg;
-  const char *font;
-  int timeout;
-  int max_keys;
-  const char *key_svg_path;
+  struct wsk_config config;
   char *icon_dir;
   RsvgHandle *key_svg;
   bool key_svg_failed;
@@ -96,8 +92,6 @@ struct wsk_state {
   struct zwlr_layer_surface_v1 *layer_surface;
   uint32_t width, height;
   bool layer_configured, layer_pending_configure, frame_scheduled, dirty;
-  uint32_t anchor;
-  int margin;
   struct pool_buffer buffers[2];
   struct pool_buffer *current_buffer;
   struct wsk_output *output, *outputs;
@@ -188,14 +182,14 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
       .border_width = 1,
       .icon_size = 20,
       .normal_bg = 0x222222CC,
-      .normal_fg = state->foreground,
+      .normal_fg = state->config.foreground,
       .special_bg = 0x444444CC,
-      .special_fg = state->specialfg,
+      .special_fg = state->config.specialfg,
       .border = 0xFFFFFF33,
   };
 
   cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
-  wsk_cairo_set_source_u32(cairo, state->background);
+  wsk_cairo_set_source_u32(cairo, state->config.background);
   cairo_paint(cairo);
   cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
 
@@ -222,7 +216,7 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
   int text_min_width = 0;
   int text_min_height = 0;
   int text_min_baseline = 0;
-  get_text_size(cairo, state->font, &text_min_width, &text_min_height,
+  get_text_size(cairo, state->config.font, &text_min_width, &text_min_height,
                 &text_min_baseline, scale, "M");
 
   const int min_content_width =
@@ -241,7 +235,7 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
     layout->icon_name = layout->special ? wsk_special_icon_name(key->name) : NULL;
     layout->icon_svg = wsk_icon_cache_get(&state->icons, state->icon_dir,
                                           layout->icon_name);
-    get_text_size(cairo, state->font, &layout->text_width,
+    get_text_size(cairo, state->config.font, &layout->text_width,
                   &layout->text_height, &layout->text_baseline, scale, "%s",
                   layout->label);
     int content_width = layout->icon_svg ? icon_size : layout->text_width;
@@ -313,7 +307,7 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
     wsk_cairo_set_source_u32(cairo,
                          layout->special ? style.special_fg : style.normal_fg);
     cairo_move_to(cairo, layout->text_x, layout->text_y);
-    pango_printf(cairo, state->font, scale, "%s", layout->label);
+    pango_printf(cairo, state->config.font, scale, "%s", layout->label);
   }
 
   free(layouts);
@@ -436,10 +430,10 @@ static void request_layer_configure(struct wsk_state *state) {
   }
 
   zwlr_layer_surface_v1_set_size(state->layer_surface, 1, 1);
-  zwlr_layer_surface_v1_set_anchor(state->layer_surface, state->anchor);
-  zwlr_layer_surface_v1_set_margin(state->layer_surface, state->margin,
-                                   state->margin, state->margin,
-                                   state->margin);
+  zwlr_layer_surface_v1_set_anchor(state->layer_surface, state->config.anchor);
+  zwlr_layer_surface_v1_set_margin(state->layer_surface, state->config.margin,
+                                   state->config.margin, state->config.margin,
+                                   state->config.margin);
   zwlr_layer_surface_v1_set_exclusive_zone(state->layer_surface, -1);
   wl_surface_commit(state->surface);
   state->layer_pending_configure = true;
@@ -724,7 +718,7 @@ static void handle_keyboard_key_event(struct wsk_state *state,
         keypress->utf8[0] <= ' ') {
       keypress->utf8[0] = '\0';
     }
-    wsk_keys_append(&state->keys, keypress, state->max_keys);
+    wsk_keys_append(&state->keys, keypress, state->config.max_keys);
     clock_gettime(CLOCK_MONOTONIC, &state->last_key);
     set_dirty(state);
     break;
@@ -752,7 +746,7 @@ static void handle_pointer_button_event(struct wsk_state *state,
     snprintf(keypress->name, sizeof(keypress->name), "Mouse 0x%x", button);
   }
 
-  wsk_keys_append(&state->keys, keypress, state->max_keys);
+  wsk_keys_append(&state->keys, keypress, state->config.max_keys);
   clock_gettime(CLOCK_MONOTONIC, &state->last_key);
   set_dirty(state);
 }
@@ -794,96 +788,26 @@ int main(int argc, char *argv[]) {
   /* Begin normal user code: */
   int ret = 0;
 
-  state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-                 ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-  state.margin = 32;
-  state.background = 0x00000000;
-  state.specialfg = 0xAAAAAAFF;
-  state.foreground = 0xFFFFFFFF;
-  state.font = "monospace 24";
-  state.timeout = 1;
-  state.max_keys = 5;
-
-  int c;
-  while ((c = getopt(argc, argv, "hb:f:s:F:t:n:a:m:o:k:")) != -1) {
-    switch (c) {
-    case 'b':
-      state.background = wsk_color_parse(optarg, 0xFFFFFFFF);
-      break;
-    case 'f':
-      state.foreground = wsk_color_parse(optarg, 0xFFFFFFFF);
-      break;
-    case 's':
-      state.specialfg = wsk_color_parse(optarg, 0xFFFFFFFF);
-      break;
-    case 'F':
-      state.font = optarg;
-      break;
-    case 't':
-      state.timeout = atoi(optarg);
-      break;
-    case 'n':
-      state.max_keys = atoi(optarg);
-      if (state.max_keys < 1) {
-        fprintf(stderr, "Invalid max key count '%s'\n", optarg);
-        return 1;
-      }
-      break;
-    case 'a':
-      if (strcmp(optarg, "top-right") == 0) {
-        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-                       ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-      } else if (strcmp(optarg, "top-center") == 0) {
-        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
-      } else if (strcmp(optarg, "top-left") == 0) {
-        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-                       ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
-      } else if (strcmp(optarg, "bottom-right") == 0) {
-        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-                       ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-      } else if (strcmp(optarg, "bottom-center") == 0) {
-        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
-      } else if (strcmp(optarg, "bottom-left") == 0) {
-        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-                       ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
-      } else if (strcmp(optarg, "center-right") == 0) {
-        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-      } else if (strcmp(optarg, "center-left") == 0) {
-        state.anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
-      } else if (strcmp(optarg, "center") == 0) {
-        state.anchor = 0;
-      } else {
-        fprintf(stderr, "Invalid anchor value '%s'\n", optarg);
-      }
-      break;
-    case 'm':
-      state.margin = atoi(optarg);
-      break;
-    case 'o':
-      fprintf(stderr, "-o is unimplemented\n");
-      return 0;
-    case 'k':
-      state.key_svg_path = optarg;
-      break;
-    default:
-      fprintf(stderr, "usage: wshowkeys [-b|-f|-s #RRGGBB[AA]] [-F font] "
-                      "[-t timeout] [-n max-keys]\n\t"
-                      "[-a top|left|right|bottom] [-m margin] "
-                      "[-o output] [-k key.svg]\n");
-      return 1;
-    }
+  wsk_config_init_defaults(&state.config);
+  if (!wsk_config_parse(&state.config, argc, argv)) {
+    ret = 1;
+    goto exit;
+  }
+  if (state.config.exit_after_parse) {
+    ret = state.config.exit_code;
+    goto exit;
   }
 
-  if (state.key_svg_path) {
-    state.icon_dir = wsk_path_dirname(state.key_svg_path);
+  if (state.config.key_svg_path) {
+    state.icon_dir = wsk_path_dirname(state.config.key_svg_path);
     if (!state.icon_dir) {
       fprintf(stderr, "Unable to allocate icon directory path\n");
     }
 
     GError *error = NULL;
-    state.key_svg = rsvg_handle_new_from_file(state.key_svg_path, &error);
+    state.key_svg = rsvg_handle_new_from_file(state.config.key_svg_path, &error);
     if (!state.key_svg) {
-      fprintf(stderr, "Unable to load key SVG '%s': %s\n", state.key_svg_path,
+      fprintf(stderr, "Unable to load key SVG '%s': %s\n", state.config.key_svg_path,
               error ? error->message : "unknown error");
       if (error) {
         g_error_free(error);
@@ -984,7 +908,7 @@ int main(int argc, char *argv[]) {
     /* Clear out old keys */
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    if (wsk_keys_expired(state.keys, state.last_key, state.timeout, now)) {
+    if (wsk_keys_expired(state.keys, state.last_key, state.config.timeout, now)) {
       wsk_keys_clear(&state.keys);
       set_dirty(&state);
     }
