@@ -1,0 +1,51 @@
+# Maintainer: iFlygo <iflygo@qq.com>
+
+pkgname=showkeys-git
+_pkgname=showkeys
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Display keypresses on screen on Wayland compositors with wlr-layer-shell support'
+arch=('x86_64' 'aarch64')
+url='https://github.com/colorsakura/showkeys'
+license=('GPL-3.0-or-later')
+depends=(
+  'cairo'
+  'libinput'
+  'librsvg'
+  'libxkbcommon'
+  'pango'
+  'systemd-libs'
+  'wayland'
+)
+makedepends=(
+  'git'
+  'meson'
+  'ninja'
+  'pkgconf'
+  'wayland-protocols'
+)
+provides=("${_pkgname}")
+conflicts=("${_pkgname}")
+source=("${_pkgname}::git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_pkgname}"
+
+  if git describe --long --tags --match 'v[0-9]*' >/dev/null 2>&1; then
+    git describe --long --tags --match 'v[0-9]*' \
+      | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+  else
+    printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  fi
+}
+
+build() {
+  arch-meson "${_pkgname}" build \
+    -Ddevpath=/dev/input/
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "${pkgdir}"
+}
