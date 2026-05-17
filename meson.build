@@ -59,6 +59,7 @@ xkbcommon = dependency('xkbcommon')
 rt = cc.find_library('rt')
 
 subdir('protocols')
+subdir('include')
 subdir('src')
 
 sk_deps = [

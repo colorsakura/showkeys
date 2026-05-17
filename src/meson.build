@@ -1,5 +1,3 @@
-sk_inc = include_directories('.')
-
 sk_src = files(
     'app.c',
     'color.c',

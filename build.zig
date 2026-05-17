@@ -61,7 +61,7 @@ pub fn build(b: *std.Build) void {
         .files = &c_sources,
         .flags = cFlags(),
     });
-    root_module.addIncludePath(b.path("src"));
+    root_module.addIncludePath(b.path("include"));
     root_module.addCMacro("_POSIX_C_SOURCE", "200809L");
     root_module.addCMacro("INPUTDEVPATH", b.fmt("\"{s}\"", .{devpath}));
 
