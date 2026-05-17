@@ -9,6 +9,7 @@ const c_sources = [_][]const u8{
     "keys.c",
     "main.c",
     "pango.c",
+    "render.c",
     "shm.c",
     "theme.c",
 };

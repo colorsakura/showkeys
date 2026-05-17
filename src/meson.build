@@ -9,6 +9,7 @@ sk_src = files(
   'keys.c',
   'main.c',
   'pango.c',
+  'render.c',
   'shm.c',
   'theme.c',
 )

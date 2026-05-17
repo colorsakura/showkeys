@@ -1,6 +1,7 @@
+#include "app.h"
 #include "config.h"
 #include "devmgr.h"
-#include "keycap.h"
+#include "render.h"
 #include "keys.h"
 #include "shm.h"
 #include "theme.h"
@@ -25,73 +26,10 @@
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h>
 
-struct wsk_output {
-  struct wl_output *output;
-  int scale;
-  enum wl_output_subpixel subpixel;
-  struct wsk_output *next;
-};
-
-struct wsk_state {
-  int devmgr;
-  pid_t devmgr_pid;
-  struct udev *udev;
-  struct libinput *libinput;
-
-  struct wsk_config config;
-  char *icon_dir;
-  RsvgHandle *key_svg;
-  bool key_svg_failed;
-  struct wsk_icon_cache icons;
-
-  struct wl_display *display;
-  struct wl_registry *registry;
-  struct wl_compositor *compositor;
-  struct wl_shm *shm;
-  struct wl_seat *seat;
-  struct wl_keyboard *keyboard;
-  struct zxdg_output_manager_v1 *output_mgr;
-  struct zwlr_layer_shell_v1 *layer_shell;
-
-  struct wl_surface *surface;
-  struct zwlr_layer_surface_v1 *layer_surface;
-  uint32_t width, height;
-  bool layer_configured, layer_pending_configure, frame_scheduled, dirty;
-  struct pool_buffer buffers[2];
-  struct pool_buffer *current_buffer;
-  struct wsk_output *output, *outputs;
-
-  struct xkb_state *xkb_state;
-  struct xkb_context *xkb_context;
-  struct xkb_keymap *xkb_keymap;
-
-  struct wsk_keypress *keys;
-  struct timespec last_key;
-
-  bool run;
-};
-
-static cairo_subpixel_order_t
-to_cairo_subpixel_order(enum wl_output_subpixel subpixel) {
-  switch (subpixel) {
-  case WL_OUTPUT_SUBPIXEL_HORIZONTAL_RGB:
-    return CAIRO_SUBPIXEL_ORDER_RGB;
-  case WL_OUTPUT_SUBPIXEL_HORIZONTAL_BGR:
-    return CAIRO_SUBPIXEL_ORDER_BGR;
-  case WL_OUTPUT_SUBPIXEL_VERTICAL_RGB:
-    return CAIRO_SUBPIXEL_ORDER_VRGB;
-  case WL_OUTPUT_SUBPIXEL_VERTICAL_BGR:
-    return CAIRO_SUBPIXEL_ORDER_VBGR;
-  default:
-    return CAIRO_SUBPIXEL_ORDER_DEFAULT;
-  }
-  return CAIRO_SUBPIXEL_ORDER_DEFAULT;
-}
-
 static const struct wl_surface_listener wl_surface_listener;
 static const struct zwlr_layer_surface_v1_listener layer_surface_listener;
 
-static void destroy_layer_surface(struct wsk_state *state) {
+void destroy_layer_surface(struct wsk_state *state) {
   if (state->layer_surface) {
     zwlr_layer_surface_v1_destroy(state->layer_surface);
     state->layer_surface = NULL;
@@ -107,7 +45,7 @@ static void destroy_layer_surface(struct wsk_state *state) {
   state->layer_pending_configure = false;
 }
 
-static bool create_layer_surface(struct wsk_state *state) {
+bool create_layer_surface(struct wsk_state *state) {
   if (state->surface) {
     return true;
   }
@@ -129,74 +67,6 @@ static bool create_layer_surface(struct wsk_state *state) {
   zwlr_layer_surface_v1_add_listener(state->layer_surface,
                                      &layer_surface_listener, state);
   return true;
-}
-
-static void render_frame(struct wsk_state *state) {
-  cairo_surface_t *recorder =
-      cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, NULL);
-  cairo_t *cairo = cairo_create(recorder);
-  cairo_set_antialias(cairo, CAIRO_ANTIALIAS_BEST);
-  cairo_font_options_t *fo = cairo_font_options_create();
-  cairo_font_options_set_hint_style(fo, CAIRO_HINT_STYLE_FULL);
-  cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_SUBPIXEL);
-  if (state->output) {
-    cairo_font_options_set_subpixel_order(
-        fo, to_cairo_subpixel_order(state->output->subpixel));
-  }
-  cairo_set_font_options(cairo, fo);
-  cairo_font_options_destroy(fo);
-  cairo_save(cairo);
-  cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
-  cairo_paint(cairo);
-  cairo_restore(cairo);
-
-  int scale = state->output ? state->output->scale : 1;
-  uint32_t width = 0, height = 0;
-  wsk_render_keycaps_to_cairo(cairo, state->keys, &state->config, &state->icons,
-                              state->icon_dir, state->key_svg,
-                              &state->key_svg_failed, scale, &width,
-                              &height);
-  if (height / scale != state->height || width / scale != state->width ||
-      state->width == 0) {
-    // Reconfigure surface
-    if (width == 0 || height == 0) {
-      destroy_layer_surface(state);
-    } else {
-      zwlr_layer_surface_v1_set_size(state->layer_surface, width / scale,
-                                     height / scale);
-    }
-
-    // TODO: this could infinite loop if the compositor assigns us a
-    // different height than what we asked for
-    if (state->surface) {
-      wl_surface_commit(state->surface);
-    }
-  } else if (height > 0) {
-    // Replay recording into shm and send it off
-    state->current_buffer =
-        get_next_buffer(state->shm, state->buffers, state->width * scale,
-                        state->height * scale);
-    if (!state->current_buffer) {
-      cairo_surface_destroy(recorder);
-      cairo_destroy(cairo);
-      return;
-    }
-    cairo_t *shm = state->current_buffer->cairo;
-
-    cairo_save(shm);
-    cairo_set_operator(shm, CAIRO_OPERATOR_CLEAR);
-    cairo_paint(shm);
-    cairo_restore(shm);
-
-    cairo_set_source_surface(shm, recorder, 0.0, 0.0);
-    cairo_paint(shm);
-
-    wl_surface_set_buffer_scale(state->surface, scale);
-    wl_surface_attach(state->surface, state->current_buffer->buffer, 0, 0);
-    wl_surface_damage_buffer(state->surface, 0, 0, state->width * scale,
-                             state->height * scale);
-    wl_surface_commit(state->surface);
-  }
 }
 
 static void request_layer_configure(struct wsk_state *state) {
@@ -225,7 +95,7 @@ static void set_dirty(struct wsk_state *state) {
     }
   } else if (state->surface) {
     state->dirty = false;
-    render_frame(state);
+    wsk_render_frame(state);
   }
 }
 
