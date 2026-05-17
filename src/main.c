@@ -895,7 +895,7 @@ int main(int argc, char *argv[]) {
 
   state.anchor = 0;
   state.margin = 32;
-  state.background = 0x000000CC;
+  state.background = 0x00000000;
   state.specialfg = 0xAAAAAAFF;
   state.foreground = 0xFFFFFFFF;
   state.font = "monospace 24";
