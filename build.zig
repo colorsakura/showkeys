@@ -76,7 +76,7 @@ pub fn build(b: *std.Build) void {
 
 fn cFlags() []const []const u8 {
     return &.{
-        "-std=c23",
+        "-std=c11",
         "-Wall",
         "-Wextra",
         "-Wundef",

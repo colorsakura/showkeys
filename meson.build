@@ -6,7 +6,7 @@ project(
   meson_version: '>=0.58.0',
   default_options: [
     'prefix=/usr',
-    'c_std=c23',
+    'c_std=c11',
     'warning_level=2',
     'werror=true',
   ],
