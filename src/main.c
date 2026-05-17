@@ -202,6 +202,13 @@ static const char *special_icon_name(const char *key_name) {
       {"Super_L", "super.svg"},     {"Super_R", "super.svg"},
       {"Left", "arrow-left.svg"},   {"Right", "arrow-right.svg"},
       {"Up", "arrow-up.svg"},       {"Down", "arrow-down.svg"},
+      {"Mouse Left", "mouse-left.svg"},
+      {"Mouse Right", "mouse-right.svg"},
+      {"Mouse Middle", "mouse-middle.svg"},
+      {"Mouse Side", "mouse-side.svg"},
+      {"Mouse Extra", "mouse-extra.svg"},
+      {"Mouse Forward", "mouse-forward.svg"},
+      {"Mouse Back", "mouse-back.svg"},
   };
 
   for (size_t i = 0; i < sizeof(icon_map) / sizeof(icon_map[0]); ++i) {
@@ -380,7 +387,7 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
   const int icon_size = style.icon_size * scale;
 
   size_t i = 0;
-  int x = 0;
+  int max_width = 0;
   int max_height = 0;
   for (const struct wsk_keypress *key = state->keys; key; key = key->next) {
     struct keycap_layout *layout = &layouts[i++];
@@ -394,21 +401,28 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
                   layout->label);
     int content_width = layout->icon_svg ? icon_size : layout->text_width;
     int content_height = layout->icon_svg ? icon_size : layout->text_height;
-    layout->x = x;
     layout->width = content_width + padding_x * 2;
     layout->height = content_height + padding_y * 2;
-    x += layout->width + gap;
+    if (max_width < layout->width) {
+      max_width = layout->width;
+    }
     if (max_height < layout->height) {
       max_height = layout->height;
     }
   }
 
-  *width = x - gap;
+  *width = (uint32_t)(key_count * (size_t)max_width +
+                     (key_count - 1) * (size_t)gap);
   *height = max_height;
 
+  int x = 0;
   for (i = 0; i < key_count; ++i) {
     struct keycap_layout *layout = &layouts[i];
-    layout->y = (max_height - layout->height) / 2;
+    layout->x = x;
+    layout->y = 0;
+    layout->width = max_width;
+    layout->height = max_height;
+    x += max_width + gap;
 
     if (!state->key_svg || state->key_svg_failed ||
         !draw_svg_keycap(cairo, state->key_svg, layout)) {
