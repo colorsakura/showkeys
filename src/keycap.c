@@ -101,7 +101,7 @@ void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys
         .gap = 6,
         .radius = 8,
         .border_width = 1,
-        .icon_size = 20,
+        .icon_size = 32,
         .normal_bg = 0x222222CC,
         .normal_fg = config->foreground,
         .special_bg = 0x444444CC,
