@@ -5,14 +5,14 @@
 #include <stdbool.h>
 
 struct wsk_icon_cache_entry {
-  char *icon_name;
-  RsvgHandle *svg;
-  bool failed;
-  struct wsk_icon_cache_entry *next;
+    char *icon_name;
+    RsvgHandle *svg;
+    bool failed;
+    struct wsk_icon_cache_entry *next;
 };
 
 struct wsk_icon_cache {
-  struct wsk_icon_cache_entry *entries;
+    struct wsk_icon_cache_entry *entries;
 };
 
 const char *wsk_special_icon_name(const char *key_name);

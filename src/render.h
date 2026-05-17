@@ -4,6 +4,7 @@
 struct wsk_app;
 
 void wsk_render_frame(struct wsk_app *app);
+
 void wsk_render_set_dirty(struct wsk_app *app);
 
 #endif
