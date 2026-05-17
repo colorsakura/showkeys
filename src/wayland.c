@@ -141,6 +141,9 @@ static void surface_enter(void *data, struct wl_surface *wl_surface,
     }
     if (wsk_output) {
         wayland->output = wsk_output;
+        // Output/scale now known — re-render at correct scale if surface is
+        // already configured (deferred by render_frame when output was NULL).
+        wsk_wayland_set_dirty(app);
     }
 }
 
