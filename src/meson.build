@@ -5,6 +5,7 @@ sk_src = files(
   'config.c',
   'devmgr.c',
   'icons.c',
+  'keycap.c',
   'keys.c',
   'main.c',
   'pango.c',

@@ -5,6 +5,7 @@ const c_sources = [_][]const u8{
     "config.c",
     "devmgr.c",
     "icons.c",
+    "keycap.c",
     "keys.c",
     "main.c",
     "pango.c",
