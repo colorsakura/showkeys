@@ -85,6 +85,7 @@ struct wsk_state {
   uint32_t foreground, background, specialfg;
   const char *font;
   int timeout;
+  int max_keys;
   const char *key_svg_path;
   char *icon_dir;
   RsvgHandle *key_svg;
@@ -829,10 +830,20 @@ static void handle_libinput_event(struct wsk_state *state,
     }
 
     struct wsk_keypress **link = &state->keys;
+    size_t key_count = 0;
     while (*link) {
       link = &(*link)->next;
+      ++key_count;
     }
     *link = keypress;
+    ++key_count;
+
+    while ((int)key_count > state->max_keys && state->keys) {
+      struct wsk_keypress *oldest = state->keys;
+      state->keys = oldest->next;
+      free(oldest);
+      --key_count;
+    }
     break;
   }
 
@@ -889,9 +900,10 @@ int main(int argc, char *argv[]) {
   state.foreground = 0xFFFFFFFF;
   state.font = "monospace 24";
   state.timeout = 1;
+  state.max_keys = 5;
 
   int c;
-  while ((c = getopt(argc, argv, "hb:f:s:F:t:a:m:o:k:")) != -1) {
+  while ((c = getopt(argc, argv, "hb:f:s:F:t:n:a:m:o:k:")) != -1) {
     switch (c) {
     case 'b':
       state.background = parse_color(optarg);
@@ -907,6 +919,13 @@ int main(int argc, char *argv[]) {
       break;
     case 't':
       state.timeout = atoi(optarg);
+      break;
+    case 'n':
+      state.max_keys = atoi(optarg);
+      if (state.max_keys < 1) {
+        fprintf(stderr, "Invalid max key count '%s'\n", optarg);
+        return 1;
+      }
       break;
     case 'a':
       if (strcmp(optarg, "top-right") == 0) {
@@ -946,7 +965,8 @@ int main(int argc, char *argv[]) {
       break;
     default:
       fprintf(stderr, "usage: wshowkeys [-b|-f|-s #RRGGBB[AA]] [-F font] "
-                      "[-t timeout]\n\t[-a top|left|right|bottom] [-m margin] "
+                      "[-t timeout] [-n max-keys]\n\t"
+                      "[-a top|left|right|bottom] [-m margin] "
                       "[-o output] [-k key.svg]\n");
       return 1;
     }

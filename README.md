@@ -28,7 +28,7 @@ permissions to read input events. These permissions are dropped after startup.
 ## Usage
 
 ```
-showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] [-t timeout]
+showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] [-t timeout] [-n max-keys]
     [-a top|left|right|bottom] [-m margin] [-o output] [-k key.svg]
 ```
 
@@ -37,6 +37,7 @@ showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] [-t timeout]
 - *-s #RRGGBB[AA]*: set color for special keys
 - *-F font*: set font (Pango format, e.g. 'monospace 24')
 - *-t timeout*: set timeout before clearing old keystrokes
+- *-n max-keys*: set the maximum number of keycaps to show at once (default: 5)
 - *-a top|left|right|bottom*: anchor the keystrokes to an edge. May be specified
   twice.
 - *-m margin*: set a margin (in pixels) from the nearest edge
