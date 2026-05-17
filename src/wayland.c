@@ -315,7 +315,7 @@ bool wsk_wayland_create_layer_surface(struct wsk_app *app) {
 
     wayland->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
         wayland->layer_shell, wayland->surface, NULL,
-        ZWLR_LAYER_SHELL_V1_LAYER_TOP, "showkeys");
+        ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "showkeys");
     if (!wayland->layer_surface) {
         wsk_wayland_destroy_layer_surface(wayland);
         wayland->surface = NULL;
@@ -323,6 +323,9 @@ bool wsk_wayland_create_layer_surface(struct wsk_app *app) {
     }
     zwlr_layer_surface_v1_add_listener(wayland->layer_surface,
                                        &layer_surface_listener, app);
+    zwlr_layer_surface_v1_set_keyboard_interactivity(
+        wayland->layer_surface,
+        ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
     return true;
 }
 
