@@ -9,6 +9,7 @@
 #include <getopt.h>
 #include <libinput.h>
 #include <libudev.h>
+#include <linux/input-event-codes.h>
 #include <librsvg/rsvg.h>
 #include <poll.h>
 #include <stdbool.h>
@@ -790,19 +791,51 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = registry_global_remove,
 };
 
-static void handle_libinput_event(struct wsk_state *state,
-                                  struct libinput_event *event) {
+static void append_keypress(struct wsk_state *state,
+                            struct wsk_keypress *keypress) {
+  struct wsk_keypress **link = &state->keys;
+  size_t key_count = 0;
+  while (*link) {
+    link = &(*link)->next;
+    ++key_count;
+  }
+  *link = keypress;
+  ++key_count;
+
+  while ((int)key_count > state->max_keys && state->keys) {
+    struct wsk_keypress *oldest = state->keys;
+    state->keys = oldest->next;
+    free(oldest);
+    --key_count;
+  }
+}
+
+static const char *pointer_button_name(uint32_t button) {
+  switch (button) {
+  case BTN_LEFT:
+    return "Mouse Left";
+  case BTN_RIGHT:
+    return "Mouse Right";
+  case BTN_MIDDLE:
+    return "Mouse Middle";
+  case BTN_SIDE:
+    return "Mouse Side";
+  case BTN_EXTRA:
+    return "Mouse Extra";
+  case BTN_FORWARD:
+    return "Mouse Forward";
+  case BTN_BACK:
+    return "Mouse Back";
+  default:
+    return NULL;
+  }
+}
+
+static void handle_keyboard_key_event(struct wsk_state *state,
+                                      struct libinput_event_keyboard *kbevent) {
   if (!state->xkb_state) {
     return;
   }
-
-  enum libinput_event_type event_type = libinput_event_get_type(event);
-  if (event_type != LIBINPUT_EVENT_KEYBOARD_KEY) {
-    return;
-  }
-
-  struct libinput_event_keyboard *kbevent =
-      libinput_event_get_keyboard_event(event);
 
   uint32_t keycode = libinput_event_keyboard_get_key(kbevent) + 8;
   enum libinput_key_state key_state =
@@ -828,27 +861,52 @@ static void handle_libinput_event(struct wsk_state *state,
         keypress->utf8[0] <= ' ') {
       keypress->utf8[0] = '\0';
     }
-
-    struct wsk_keypress **link = &state->keys;
-    size_t key_count = 0;
-    while (*link) {
-      link = &(*link)->next;
-      ++key_count;
-    }
-    *link = keypress;
-    ++key_count;
-
-    while ((int)key_count > state->max_keys && state->keys) {
-      struct wsk_keypress *oldest = state->keys;
-      state->keys = oldest->next;
-      free(oldest);
-      --key_count;
-    }
+    append_keypress(state, keypress);
+    clock_gettime(CLOCK_MONOTONIC, &state->last_key);
+    set_dirty(state);
     break;
   }
+}
 
+static void handle_pointer_button_event(struct wsk_state *state,
+                                        struct libinput_event_pointer *pevent) {
+  enum libinput_button_state button_state =
+      libinput_event_pointer_get_button_state(pevent);
+  if (button_state != LIBINPUT_BUTTON_STATE_PRESSED) {
+    return;
+  }
+
+  uint32_t button = libinput_event_pointer_get_button(pevent);
+  struct wsk_keypress *keypress = calloc(1, sizeof(struct wsk_keypress));
+  assert(keypress);
+  keypress->sym = XKB_KEY_NoSymbol;
+  keypress->utf8[0] = '\0';
+
+  const char *name = pointer_button_name(button);
+  if (name) {
+    snprintf(keypress->name, sizeof(keypress->name), "%s", name);
+  } else {
+    snprintf(keypress->name, sizeof(keypress->name), "Mouse 0x%x", button);
+  }
+
+  append_keypress(state, keypress);
   clock_gettime(CLOCK_MONOTONIC, &state->last_key);
   set_dirty(state);
+}
+
+static void handle_libinput_event(struct wsk_state *state,
+                                  struct libinput_event *event) {
+  enum libinput_event_type event_type = libinput_event_get_type(event);
+  switch (event_type) {
+  case LIBINPUT_EVENT_KEYBOARD_KEY:
+    handle_keyboard_key_event(state, libinput_event_get_keyboard_event(event));
+    break;
+  case LIBINPUT_EVENT_POINTER_BUTTON:
+    handle_pointer_button_event(state, libinput_event_get_pointer_event(event));
+    break;
+  default:
+    break;
+  }
 }
 
 static int libinput_open_restricted(const char *path, int flags, void *data) {
