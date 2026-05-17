@@ -75,13 +75,6 @@ pub fn build(b: *std.Build) void {
     root_module.addIncludePath(protocol_output_dir);
 
     b.installArtifact(exe);
-
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
-
-    const run_step = b.step("run", "Run showkeys");
-    run_step.dependOn(&run_cmd.step);
 }
 
 fn cFlags() []const []const u8 {
