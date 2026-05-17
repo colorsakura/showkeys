@@ -489,18 +489,35 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
     }
   }
 
-  *width = (uint32_t)(key_count * (size_t)max_width +
-                     (key_count - 1) * (size_t)gap);
-  *height = max_height;
+  int popup_height = max_height;
+  for (i = 0; i < key_count; ++i) {
+    struct keycap_layout *layout = &layouts[i];
+    if ((layout->icon_svg || !layout->special) && layout->width > popup_height) {
+      popup_height = layout->width;
+    }
+  }
+
+  size_t total_width = 0;
+  for (i = 0; i < key_count; ++i) {
+    struct keycap_layout *layout = &layouts[i];
+    layout->height = popup_height;
+    if (layout->icon_svg || !layout->special) {
+      layout->width = popup_height;
+    } else {
+      layout->width = max_width;
+    }
+    total_width += (size_t)layout->width;
+  }
+
+  *width = (uint32_t)(total_width + (key_count - 1) * (size_t)gap);
+  *height = popup_height;
 
   int x = 0;
   for (i = 0; i < key_count; ++i) {
     struct keycap_layout *layout = &layouts[i];
     layout->x = x;
     layout->y = 0;
-    layout->width = max_width;
-    layout->height = max_height;
-    x += max_width + gap;
+    x += layout->width + gap;
 
     if (!state->key_svg || state->key_svg_failed ||
         !draw_svg_keycap(cairo, state->key_svg, layout)) {
@@ -518,8 +535,8 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
       continue;
     }
 
-    layout->text_x = layout->x + padding_x;
-    layout->text_y = layout->y + padding_y;
+    layout->text_x = layout->x + (layout->width - layout->text_width) / 2;
+    layout->text_y = layout->y + (layout->height - layout->text_height) / 2;
     cairo_set_source_u32(cairo,
                          layout->special ? style.special_fg : style.normal_fg);
     cairo_move_to(cairo, layout->text_x, layout->text_y);
