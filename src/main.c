@@ -1,6 +1,10 @@
+#include "color.h"
 #include "devmgr.h"
+#include "icons.h"
+#include "keys.h"
 #include "pango.h"
 #include "shm.h"
+#include "theme.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include <assert.h>
@@ -23,13 +27,6 @@
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h>
 
-struct wsk_keypress {
-  xkb_keysym_t sym;
-  char name[128];
-  char utf8[128];
-  struct wsk_keypress *next;
-};
-
 struct wsk_output {
   struct wl_output *output;
   int scale;
@@ -49,13 +46,6 @@ struct keycap_style {
   uint32_t special_bg;
   uint32_t special_fg;
   uint32_t border;
-};
-
-struct icon_cache_entry {
-  char *icon_name;
-  RsvgHandle *svg;
-  bool failed;
-  struct icon_cache_entry *next;
 };
 
 struct keycap_layout {
@@ -91,7 +81,7 @@ struct wsk_state {
   char *icon_dir;
   RsvgHandle *key_svg;
   bool key_svg_failed;
-  struct icon_cache_entry *icons;
+  struct wsk_icon_cache icons;
 
   struct wl_display *display;
   struct wl_registry *registry;
@@ -122,13 +112,6 @@ struct wsk_state {
   bool run;
 };
 
-static void cairo_set_source_u32(cairo_t *cairo, uint32_t color) {
-  cairo_set_source_rgba(cairo, (color >> (3 * 8) & 0xFF) / 255.0,
-                        (color >> (2 * 8) & 0xFF) / 255.0,
-                        (color >> (1 * 8) & 0xFF) / 255.0,
-                        (color >> (0 * 8) & 0xFF) / 255.0);
-}
-
 static void rounded_rectangle(cairo_t *cairo, double x, double y, double w,
                               double h, double r) {
   if (r > w / 2.0) {
@@ -148,247 +131,36 @@ static void rounded_rectangle(cairo_t *cairo, double x, double y, double w,
   cairo_close_path(cairo);
 }
 
-static char *xstrdup(const char *str) {
-  size_t len = strlen(str) + 1;
-  char *copy = malloc(len);
-  if (copy) {
-    memcpy(copy, str, len);
-  }
-  return copy;
-}
-
-static char *path_dirname(const char *path) {
-  const char *slash = strrchr(path, '/');
-  if (!slash) {
-    return xstrdup(".");
-  }
-  if (slash == path) {
-    return xstrdup("/");
-  }
-
-  size_t len = (size_t)(slash - path);
-  char *dir = malloc(len + 1);
-  if (!dir) {
-    return NULL;
-  }
-  memcpy(dir, path, len);
-  dir[len] = '\0';
-  return dir;
-}
-
-static char *join_path3(const char *dir, const char *subdir, const char *file) {
-  const char *sep1 = (dir[0] && dir[strlen(dir) - 1] == '/') ? "" : "/";
-  const char *sep2 = (subdir[0] && subdir[strlen(subdir) - 1] == '/') ? "" : "/";
-  size_t len = strlen(dir) + strlen(sep1) + strlen(subdir) + strlen(sep2) +
-               strlen(file) + 1;
-  char *path = malloc(len);
-  if (!path) {
-    return NULL;
-  }
-  snprintf(path, len, "%s%s%s%s%s", dir, sep1, subdir, sep2, file);
-  return path;
-}
-
-static const char *special_icon_name(const char *key_name) {
-  static const struct {
-    const char *key_name;
-    const char *icon_name;
-  } icon_map[] = {
-      {"Escape", "escape.svg"},
-      {"Tab", "tab.svg"},
-      {"ISO_Left_Tab", "tab.svg"},
-      {"Enter", "enter.svg"},
-      {"Return", "enter.svg"},
-      {"KP_Enter", "enter.svg"},
-      {"BackSpace", "backspace.svg"},
-      {"Delete", "delete.svg"},
-      {"KP_Delete", "delete.svg"},
-      {"Insert", "insert.svg"},
-      {"KP_Insert", "insert.svg"},
-      {"Home", "home.svg"},
-      {"KP_Home", "home.svg"},
-      {"End", "end.svg"},
-      {"KP_End", "end.svg"},
-      {"Page_Up", "page-up.svg"},
-      {"KP_Page_Up", "page-up.svg"},
-      {"Page_Down", "page-down.svg"},
-      {"KP_Page_Down", "page-down.svg"},
-      {"Caps_Lock", "caps-lock.svg"},
-      {"Num_Lock", "num-lock.svg"},
-      {"Scroll_Lock", "scroll-lock.svg"},
-      {"Pause", "pause.svg"},
-      {"Break", "pause.svg"},
-      {"Print", "print-screen.svg"},
-      {"Sys_Req", "print-screen.svg"},
-      {"Menu", "menu.svg"},
-      {"XF86MenuKB", "menu.svg"},
-      {"space", "space.svg"},
-      {"KP_Space", "space.svg"},
-      {"Shift_L", "shift.svg"},
-      {"Shift_R", "shift.svg"},
-      {"Control_L", "ctrl.svg"},
-      {"Control_R", "ctrl.svg"},
-      {"Alt_L", "alt.svg"},
-      {"Alt_R", "alt.svg"},
-      {"Meta_L", "alt.svg"},
-      {"Meta_R", "alt.svg"},
-      {"Super_L", "super.svg"},
-      {"Super_R", "super.svg"},
-      {"Hyper_L", "super.svg"},
-      {"Hyper_R", "super.svg"},
-      {"Left", "arrow-left.svg"},
-      {"KP_Left", "arrow-left.svg"},
-      {"Right", "arrow-right.svg"},
-      {"KP_Right", "arrow-right.svg"},
-      {"Up", "arrow-up.svg"},
-      {"KP_Up", "arrow-up.svg"},
-      {"Down", "arrow-down.svg"},
-      {"KP_Down", "arrow-down.svg"},
-      {"KP_Begin", "keypad.svg"},
-      {"KP_Add", "keypad.svg"},
-      {"KP_Subtract", "keypad.svg"},
-      {"KP_Multiply", "keypad.svg"},
-      {"KP_Divide", "keypad.svg"},
-      {"XF86AudioPlay", "media-play.svg"},
-      {"XF86AudioPause", "pause.svg"},
-      {"XF86AudioStop", "media-stop.svg"},
-      {"XF86AudioPrev", "media-prev.svg"},
-      {"XF86AudioNext", "media-next.svg"},
-      {"XF86AudioRaiseVolume", "volume-up.svg"},
-      {"XF86AudioLowerVolume", "volume-down.svg"},
-      {"XF86AudioMute", "volume-mute.svg"},
-      {"XF86MonBrightnessUp", "brightness.svg"},
-      {"XF86MonBrightnessDown", "brightness.svg"},
-      {"XF86KbdBrightnessUp", "brightness.svg"},
-      {"XF86KbdBrightnessDown", "brightness.svg"},
-      {"XF86Fn", "fn.svg"},
-      {"XF86Fn_Esc", "fn.svg"},
-      {"Mouse Left", "mouse-left.svg"},
-      {"Mouse Right", "mouse-right.svg"},
-      {"Mouse Middle", "mouse-middle.svg"},
-      {"Mouse Side", "mouse-side.svg"},
-      {"Mouse Extra", "mouse-extra.svg"},
-      {"Mouse Forward", "mouse-forward.svg"},
-      {"Mouse Back", "mouse-back.svg"},
-  };
-
-  for (size_t i = 0; i < sizeof(icon_map) / sizeof(icon_map[0]); ++i) {
-    if (strcmp(key_name, icon_map[i].key_name) == 0) {
-      return icon_map[i].icon_name;
-    }
-  }
-  return NULL;
-}
-
-static RsvgHandle *get_icon_svg(struct wsk_state *state, const char *icon_name) {
-  if (!state->icon_dir || !icon_name) {
-    return NULL;
-  }
-
-  for (struct icon_cache_entry *entry = state->icons; entry;
-       entry = entry->next) {
-    if (strcmp(entry->icon_name, icon_name) == 0) {
-      return entry->failed ? NULL : entry->svg;
-    }
-  }
-
-  struct icon_cache_entry *entry = calloc(1, sizeof(*entry));
-  if (!entry) {
-    return NULL;
-  }
-  entry->icon_name = xstrdup(icon_name);
-  if (!entry->icon_name) {
-    free(entry);
-    return NULL;
-  }
-
-  char *path = join_path3(state->icon_dir, "icons", icon_name);
-  if (!path) {
-    entry->failed = true;
-  } else {
-    GError *error = NULL;
-    entry->svg = rsvg_handle_new_from_file(path, &error);
-    if (!entry->svg) {
-      entry->failed = true;
-      if (error) {
-        g_error_free(error);
-      }
-    }
-    free(path);
-  }
-
-  entry->next = state->icons;
-  state->icons = entry;
-  return entry->failed ? NULL : entry->svg;
-}
-
-static void free_icon_cache(struct icon_cache_entry *icons) {
-  while (icons) {
-    struct icon_cache_entry *next = icons->next;
-    if (icons->svg) {
-      g_object_unref(icons->svg);
-    }
-    free(icons->icon_name);
-    free(icons);
-    icons = next;
-  }
-}
-
 static void draw_cairo_keycap(cairo_t *cairo, const struct keycap_layout *layout,
                               const struct keycap_style *style, int radius,
                               int border_width) {
   rounded_rectangle(cairo, layout->x, layout->y, layout->width, layout->height,
                     radius);
-  cairo_set_source_u32(cairo, layout->special ? style->special_bg
+  wsk_cairo_set_source_u32(cairo, layout->special ? style->special_bg
                                               : style->normal_bg);
   cairo_fill_preserve(cairo);
 
   if (border_width > 0) {
     cairo_set_line_width(cairo, border_width);
-    cairo_set_source_u32(cairo, style->border);
+    wsk_cairo_set_source_u32(cairo, style->border);
     cairo_stroke(cairo);
   } else {
     cairo_new_path(cairo);
   }
 }
 
-static bool draw_svg_to_rect(cairo_t *cairo, RsvgHandle *svg, double x,
-                             double y, double width, double height,
-                             const char *description) {
-  RsvgRectangle viewport = {
-      .x = x,
-      .y = y,
-      .width = width,
-      .height = height,
-  };
-  GError *error = NULL;
-  gboolean ok = rsvg_handle_render_document(svg, cairo, &viewport, &error);
-  if (!ok) {
-    if (error) {
-      fprintf(stderr, "Unable to render %s SVG: %s\n", description,
-              error->message);
-      g_error_free(error);
-    } else {
-      fprintf(stderr, "Unable to render %s SVG\n", description);
-    }
-    return false;
-  }
-  return true;
-}
-
 static bool draw_svg_keycap(cairo_t *cairo, RsvgHandle *svg,
                             const struct keycap_layout *layout) {
-  return draw_svg_to_rect(cairo, svg, layout->x, layout->y, layout->width,
-                          layout->height, "key");
+  return wsk_svg_draw_to_rect(cairo, svg, layout->x, layout->y, layout->width,
+                              layout->height, "key");
 }
 
 static bool draw_svg_icon(cairo_t *cairo, RsvgHandle *svg,
                           const struct keycap_layout *layout,
                           int icon_size) {
-  return draw_svg_to_rect(cairo, svg, layout->icon_x, layout->icon_y, icon_size,
-                          icon_size, "icon");
+  return wsk_svg_draw_to_rect(cairo, svg, layout->icon_x, layout->icon_y,
+                              icon_size, icon_size, "icon");
 }
-
 static cairo_subpixel_order_t
 to_cairo_subpixel_order(enum wl_output_subpixel subpixel) {
   switch (subpixel) {
@@ -423,7 +195,7 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
   };
 
   cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
-  cairo_set_source_u32(cairo, state->background);
+  wsk_cairo_set_source_u32(cairo, state->background);
   cairo_paint(cairo);
   cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
 
@@ -466,8 +238,9 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
     layout->key = key;
     layout->special = key->utf8[0] == '\0';
     layout->label = layout->special ? key->name : key->utf8;
-    layout->icon_name = layout->special ? special_icon_name(key->name) : NULL;
-    layout->icon_svg = get_icon_svg(state, layout->icon_name);
+    layout->icon_name = layout->special ? wsk_special_icon_name(key->name) : NULL;
+    layout->icon_svg = wsk_icon_cache_get(&state->icons, state->icon_dir,
+                                          layout->icon_name);
     get_text_size(cairo, state->font, &layout->text_width,
                   &layout->text_height, &layout->text_baseline, scale, "%s",
                   layout->label);
@@ -537,7 +310,7 @@ static void render_to_cairo(cairo_t *cairo, struct wsk_state *state, int scale,
 
     layout->text_x = layout->x + (layout->width - layout->text_width) / 2;
     layout->text_y = layout->y + (layout->height - layout->text_height) / 2;
-    cairo_set_source_u32(cairo,
+    wsk_cairo_set_source_u32(cairo,
                          layout->special ? style.special_fg : style.normal_fg);
     cairo_move_to(cairo, layout->text_x, layout->text_y);
     pango_printf(cairo, state->font, scale, "%s", layout->label);
@@ -900,25 +673,6 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = registry_global_remove,
 };
 
-static void append_keypress(struct wsk_state *state,
-                            struct wsk_keypress *keypress) {
-  struct wsk_keypress **link = &state->keys;
-  size_t key_count = 0;
-  while (*link) {
-    link = &(*link)->next;
-    ++key_count;
-  }
-  *link = keypress;
-  ++key_count;
-
-  while ((int)key_count > state->max_keys && state->keys) {
-    struct wsk_keypress *oldest = state->keys;
-    state->keys = oldest->next;
-    free(oldest);
-    --key_count;
-  }
-}
-
 static const char *pointer_button_name(uint32_t button) {
   switch (button) {
   case BTN_LEFT:
@@ -970,7 +724,7 @@ static void handle_keyboard_key_event(struct wsk_state *state,
         keypress->utf8[0] <= ' ') {
       keypress->utf8[0] = '\0';
     }
-    append_keypress(state, keypress);
+    wsk_keys_append(&state->keys, keypress, state->max_keys);
     clock_gettime(CLOCK_MONOTONIC, &state->last_key);
     set_dirty(state);
     break;
@@ -998,7 +752,7 @@ static void handle_pointer_button_event(struct wsk_state *state,
     snprintf(keypress->name, sizeof(keypress->name), "Mouse 0x%x", button);
   }
 
-  append_keypress(state, keypress);
+  wsk_keys_append(&state->keys, keypress, state->max_keys);
   clock_gettime(CLOCK_MONOTONIC, &state->last_key);
   set_dirty(state);
 }
@@ -1030,26 +784,6 @@ static const struct libinput_interface libinput_impl = {
     .close_restricted = libinput_close_restricted,
 };
 
-static uint32_t parse_color(const char *color) {
-  if (color[0] == '#') {
-    ++color;
-  }
-
-  int len = strlen(color);
-  if (len != 6 && len != 8) {
-    fprintf(stderr,
-            "Invalid color %s, defaulting to color "
-            "0xFFFFFFFF\n",
-            color);
-    return 0xFFFFFFFF;
-  }
-  uint32_t res = (uint32_t)strtoul(color, NULL, 16);
-  if (strlen(color) == 6) {
-    res = (res << 8) | 0xFF;
-  }
-  return res;
-}
-
 int main(int argc, char *argv[]) {
   /* NOTICE: This code runs as root */
   struct wsk_state state = {0};
@@ -1074,13 +808,13 @@ int main(int argc, char *argv[]) {
   while ((c = getopt(argc, argv, "hb:f:s:F:t:n:a:m:o:k:")) != -1) {
     switch (c) {
     case 'b':
-      state.background = parse_color(optarg);
+      state.background = wsk_color_parse(optarg, 0xFFFFFFFF);
       break;
     case 'f':
-      state.foreground = parse_color(optarg);
+      state.foreground = wsk_color_parse(optarg, 0xFFFFFFFF);
       break;
     case 's':
-      state.specialfg = parse_color(optarg);
+      state.specialfg = wsk_color_parse(optarg, 0xFFFFFFFF);
       break;
     case 'F':
       state.font = optarg;
@@ -1141,7 +875,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (state.key_svg_path) {
-    state.icon_dir = path_dirname(state.key_svg_path);
+    state.icon_dir = wsk_path_dirname(state.key_svg_path);
     if (!state.icon_dir) {
       fprintf(stderr, "Unable to allocate icon directory path\n");
     }
@@ -1250,16 +984,8 @@ int main(int argc, char *argv[]) {
     /* Clear out old keys */
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    if (now.tv_sec > state.last_key.tv_sec + state.timeout ||
-        (now.tv_sec == state.last_key.tv_sec + state.timeout &&
-         now.tv_nsec >= state.last_key.tv_nsec)) {
-      struct wsk_keypress *key = state.keys;
-      while (key) {
-        struct wsk_keypress *next = key->next;
-        free(key);
-        key = next;
-      }
-      state.keys = NULL;
+    if (wsk_keys_expired(state.keys, state.last_key, state.timeout, now)) {
+      wsk_keys_clear(&state.keys);
       set_dirty(&state);
     }
 
@@ -1283,7 +1009,7 @@ int main(int argc, char *argv[]) {
   }
 
 exit:
-  free_icon_cache(state.icons);
+  wsk_icon_cache_finish(&state.icons);
   free(state.icon_dir);
   if (state.key_svg) {
     g_object_unref(state.key_svg);

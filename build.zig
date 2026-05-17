@@ -1,10 +1,14 @@
 const std = @import("std");
 
 const c_sources = [_][]const u8{
+    "color.c",
     "devmgr.c",
+    "icons.c",
+    "keys.c",
     "main.c",
     "pango.c",
     "shm.c",
+    "theme.c",
 };
 
 const pkg_config_deps = [_][]const u8{
