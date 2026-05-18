@@ -1,6 +1,8 @@
-# CLAUDE.md
+# ShowKeys 工程上下文
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+ShowKeys 是一款用 C 编写的运行在 Linux Wayland 环境下的按键显示软件。支持 meson 和 zig 构建系统，推荐优先使用 zig 构建。
+
+## Rules
 
 ## 设计风格
 

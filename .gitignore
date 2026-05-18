@@ -1,5 +1,4 @@
-build
-buildDir
-.cache
-zig-out
-.zig-cache
+build/
+buildDir/
+zig-out/
+.zig-cache/

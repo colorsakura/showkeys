@@ -1,17 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" preserveAspectRatio="none">
-  <defs>
-    <linearGradient id="glass-fill" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#282a30" stop-opacity="0.80"/>
-      <stop offset="0.42" stop-color="#34363d" stop-opacity="0.96"/>
-      <stop offset="1" stop-color="#0f1014" stop-opacity="0.98"/>
-    </linearGradient>
-    <linearGradient id="glass-rim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.70"/>
-      <stop offset="0.52" stop-color="#ffffff" stop-opacity="0.20"/>
-      <stop offset="1" stop-color="#000000" stop-opacity="0.24"/>
-    </linearGradient>
-  </defs>
-  <rect x="0.65" y="0.65" width="22.7" height="22.7" rx="5.4" fill="url(#glass-fill)"/>
-  <rect x="0.9" y="0.9" width="22.2" height="22.2" rx="5.15" fill="none" stroke="url(#glass-rim)" stroke-width="0.45"/>
-  <path d="M4.4 21.95h15.2" stroke="#000000" stroke-opacity="0.28" stroke-width="0.35" stroke-linecap="round"/>
+    <defs>
+        <linearGradient id="glass-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#282a30" stop-opacity="0.80"/>
+            <stop offset="0.42" stop-color="#34363d" stop-opacity="0.96"/>
+            <stop offset="1" stop-color="#0f1014" stop-opacity="0.98"/>
+        </linearGradient>
+        <linearGradient id="glass-rim" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#ffffff" stop-opacity="0.70"/>
+            <stop offset="0.52" stop-color="#ffffff" stop-opacity="0.20"/>
+            <stop offset="1" stop-color="#000000" stop-opacity="0.24"/>
+        </linearGradient>
+    </defs>
+    <rect x="0.65" y="0.65" width="22.7" height="22.7" rx="5.4" fill="url(#glass-fill)"/>
+    <rect x="0.9" y="0.9" width="22.2" height="22.2" rx="5.15" fill="none" stroke="url(#glass-rim)"
+          stroke-width="0.45"/>
 </svg>
