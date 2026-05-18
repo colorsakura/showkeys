@@ -21,25 +21,6 @@ struct keycap_style {
     uint32_t border;
 };
 
-struct keycap_layout {
-    const struct wsk_keypress *key;
-    const char *label;
-    bool special;
-    const char *icon_name;
-    RsvgHandle *icon_svg;
-    int text_width;
-    int text_height;
-    int text_baseline;
-    int x;
-    int y;
-    int width;
-    int height;
-    int icon_x;
-    int icon_y;
-    int text_x;
-    int text_y;
-};
-
 static void rounded_rectangle(cairo_t *cairo, double x, double y, double w,
                               double h, double r) {
     if (r > w / 2.0) {
@@ -91,10 +72,28 @@ static bool draw_svg_icon(cairo_t *cairo, RsvgHandle *svg,
                                 icon_size, icon_size, "icon");
 }
 
-void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys,
-                                 const struct wsk_config *config,
-                                 struct wsk_theme *theme, int scale,
-                                 uint32_t *width, uint32_t *height) {
+size_t wsk_measure_keycaps(cairo_t *cairo, const struct wsk_keypress *keys,
+                           const struct wsk_config *config,
+                           struct wsk_theme *theme, int scale,
+                           uint32_t *width, uint32_t *height,
+                           struct keycap_layout **out_layouts) {
+    *width = 0;
+    *height = 0;
+    *out_layouts = NULL;
+
+    size_t key_count = 0;
+    for (const struct wsk_keypress *key = keys; key; key = key->next) {
+        ++key_count;
+    }
+    if (key_count == 0) {
+        return 0;
+    }
+
+    struct keycap_layout *layouts = calloc(key_count, sizeof(*layouts));
+    if (!layouts) {
+        return 0;
+    }
+
     const struct keycap_style style = {
         .padding_x = 12,
         .padding_y = 6,
@@ -102,36 +101,11 @@ void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys
         .radius = 8,
         .border_width = 1,
         .icon_size = 32,
-        .normal_bg = 0x222222CC,
-        .normal_fg = config->foreground,
-        .special_bg = 0x444444CC,
-        .special_fg = config->specialfg,
-        .border = 0xFFFFFF33,
     };
-
-    cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
-    wsk_cairo_set_source_u32(cairo, config->background);
-    cairo_paint(cairo);
-    cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
-
-    size_t key_count = 0;
-    for (const struct wsk_keypress *key = keys; key; key = key->next) {
-        ++key_count;
-    }
-    if (key_count == 0) {
-        return;
-    }
-
-    struct keycap_layout *layouts = calloc(key_count, sizeof(*layouts));
-    if (!layouts) {
-        return;
-    }
 
     const int padding_x = style.padding_x * scale;
     const int padding_y = style.padding_y * scale;
     const int gap = style.gap * scale;
-    const int radius = style.radius * scale;
-    const int border_width = style.border_width * scale;
     const int icon_size = style.icon_size * scale;
 
     int text_min_width = 0;
@@ -199,9 +173,34 @@ void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys
 
     *width = (uint32_t)(total_width + (key_count - 1) * (size_t) gap);
     *height = popup_height;
+    *out_layouts = layouts;
+    return key_count;
+}
+
+void wsk_render_keycaps(cairo_t *cairo, struct keycap_layout *layouts,
+                        size_t key_count, const struct wsk_config *config,
+                        struct wsk_theme *theme, int scale) {
+    const struct keycap_style style = {
+        .padding_x = 12,
+        .padding_y = 6,
+        .gap = 6,
+        .radius = 8,
+        .border_width = 1,
+        .icon_size = 32,
+        .normal_bg = 0x222222CC,
+        .normal_fg = config->foreground,
+        .special_bg = 0x444444CC,
+        .special_fg = config->specialfg,
+        .border = 0xFFFFFF33,
+    };
+
+    const int gap = style.gap * scale;
+    const int radius = style.radius * scale;
+    const int border_width = style.border_width * scale;
+    const int icon_size = style.icon_size * scale;
 
     int x = 0;
-    for (i = 0; i < key_count; ++i) {
+    for (size_t i = 0; i < key_count; ++i) {
         struct keycap_layout *layout = &layouts[i];
         layout->x = x;
         layout->y = 0;
@@ -230,6 +229,22 @@ void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys
         cairo_move_to(cairo, layout->text_x, layout->text_y);
         pango_printf(cairo, config->font, scale, "%s", layout->label);
     }
+}
 
-    free(layouts);
+void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys,
+                                 const struct wsk_config *config,
+                                 struct wsk_theme *theme, int scale,
+                                 uint32_t *width, uint32_t *height) {
+    cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
+    wsk_cairo_set_source_u32(cairo, config->background);
+    cairo_paint(cairo);
+    cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+
+    struct keycap_layout *layouts = NULL;
+    size_t key_count = wsk_measure_keycaps(cairo, keys, config, theme, scale,
+                                           width, height, &layouts);
+    if (layouts) {
+        wsk_render_keycaps(cairo, layouts, key_count, config, theme, scale);
+        free(layouts);
+    }
 }
