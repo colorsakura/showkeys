@@ -125,6 +125,7 @@ struct pool_buffer *get_next_buffer(struct wl_shm *shm,
             continue;
         }
         buffer = &pool[i];
+        break;
     }
 
     if (!buffer) {
