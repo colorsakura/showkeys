@@ -7,6 +7,7 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 #include <cairo/cairo.h>
+#include <wayland-client.h>
 
 cairo_subpixel_order_t
 to_cairo_subpixel_order(enum wl_output_subpixel subpixel) {
@@ -88,6 +89,13 @@ void wsk_render_frame(struct wsk_app *app) {
         wl_surface_attach(wl->surface, wl->current_buffer->buffer, 0, 0);
         wl_surface_damage_buffer(wl->surface, 0, 0, wl->width * scale,
                                  wl->height * scale);
+
+        // Register frame callback BEFORE commit to throttle rendering
+        wl->frame_callback = wl_surface_frame(wl->surface);
+        wl_callback_add_listener(wl->frame_callback,
+                                 &frame_listener, app);
+        wl->frame_scheduled = true;
+
         wl_surface_commit(wl->surface);
     }
 }

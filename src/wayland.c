@@ -51,6 +51,9 @@ static void keyboard_modifiers(void *data, struct wl_keyboard *wl_keyboard,
 static void keyboard_repeat_info(void *data, struct wl_keyboard *wl_keyboard,
                                  int32_t rate, int32_t delay);
 
+static void frame_done(void *data, struct wl_callback *callback,
+                       uint32_t callback_data);
+
 static void seat_capabilities(void *data, struct wl_seat *wl_seat,
                               uint32_t capabilities);
 
@@ -85,6 +88,9 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 static const struct wl_surface_listener wl_surface_listener = {
     .enter = surface_enter,
     .leave = surface_leave,
+};
+const struct wl_callback_listener frame_listener = {
+    .done = frame_done,
 };
 static const struct wl_keyboard_listener wl_keyboard_listener = {
     .keymap = keyboard_keymap,
@@ -187,6 +193,25 @@ static void keyboard_repeat_info(void *data, struct wl_keyboard *wl_keyboard,
     // TODO
 }
 
+static void frame_done(void *data, struct wl_callback *callback,
+                       uint32_t callback_data) {
+    (void) callback_data;
+    struct wsk_app *app = data;
+    struct wsk_wayland *wayland = &app->wayland;
+
+    // Destroy the callback object
+    wl_callback_destroy(callback);
+    wayland->frame_callback = NULL;
+    wayland->frame_scheduled = false;
+
+    // If the surface was marked dirty while the frame was in flight,
+    // render the next frame now.
+    if (wayland->dirty && wayland->layer_configured && wayland->surface) {
+        wayland->dirty = false;
+        wsk_render_frame(app);
+    }
+}
+
 static void seat_capabilities(void *data, struct wl_seat *wl_seat,
                               uint32_t capabilities) {
     struct wsk_app *app = data;
@@ -286,6 +311,11 @@ static void registry_global_remove(void *data,
 
 // Finally, the public API functions
 void wsk_wayland_destroy_layer_surface(struct wsk_wayland *wayland) {
+    if (wayland->frame_callback) {
+        wl_callback_destroy(wayland->frame_callback);
+        wayland->frame_callback = NULL;
+    }
+    wayland->frame_scheduled = false;
     if (wayland->layer_surface) {
         zwlr_layer_surface_v1_destroy(wayland->layer_surface);
         wayland->layer_surface = NULL;

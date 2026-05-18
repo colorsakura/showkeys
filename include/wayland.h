@@ -30,6 +30,7 @@ struct wsk_wayland {
     struct zwlr_layer_surface_v1 *layer_surface;
     uint32_t width, height;
     bool layer_configured, layer_pending_configure, frame_scheduled, dirty;
+    struct wl_callback *frame_callback;
     struct pool_buffer buffers[2];
     struct pool_buffer *current_buffer;
     struct wsk_output *output, *outputs;
@@ -50,6 +51,8 @@ void wsk_wayland_set_dirty(struct wsk_app *app);
 void wsk_wayland_request_layer_configure(struct wsk_app *app);
 
 void wsk_wayland_destroy_layer_surface(struct wsk_wayland *wayland);
+
+extern const struct wl_callback_listener frame_listener;
 
 bool wsk_wayland_create_layer_surface(struct wsk_app *app);
 
