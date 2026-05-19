@@ -106,14 +106,6 @@ int wsk_app_run(struct wsk_app *app) {
             break;
         }
 
-        /* Clear out old keys */
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        if (wsk_keys_expired(&app->keys, app->config.timeout, now)) {
-            wsk_keys_clear(&app->keys);
-            wsk_wayland_set_dirty(app);
-        }
-
         if ((pollfds[0].revents & POLLIN)) {
             if (libinput_dispatch(app->input.libinput) != 0) {
                 fprintf(stderr, "libinput_dispatch: %s\n",
@@ -137,6 +129,16 @@ int wsk_app_run(struct wsk_app *app) {
             fprintf(stderr, "wl_display_dispatch: %s\n",
                     strerror(errno));
             break;
+        }
+
+        /* Clear out old keys after processing input so an event arriving near
+         * the timeout boundary refreshes the popup instead of destroying and
+         * immediately recreating the layer surface. */
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if (wsk_keys_expired(&app->keys, app->config.timeout, now)) {
+            wsk_keys_clear(&app->keys);
+            wsk_wayland_set_dirty(app);
         }
     }
     return 0;

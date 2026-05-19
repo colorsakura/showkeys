@@ -381,7 +381,8 @@ void wsk_wayland_request_layer_configure(struct wsk_app *app) {
 
 void wsk_wayland_set_dirty(struct wsk_app *app) {
     struct wsk_wayland *wayland = &app->wayland;
-    if (wayland->frame_scheduled || !wayland->layer_configured) {
+    if (wayland->frame_scheduled || wayland->layer_pending_configure ||
+        !wayland->layer_configured) {
         wayland->dirty = true;
         if (!wayland->layer_configured) {
             wsk_wayland_request_layer_configure(app);
