@@ -138,6 +138,20 @@ static void handle_keyboard_key_event(struct wsk_app *app,
     }
 }
 
+static void append_pointer_event(struct wsk_app *app, const char *name,
+                                 bool *dirty) {
+    struct wsk_keypress *keypress = calloc(1, sizeof(struct wsk_keypress));
+    assert(keypress);
+    keypress->sym = XKB_KEY_NoSymbol;
+    keypress->utf8[0] = '\0';
+    snprintf(keypress->name, sizeof(keypress->name), "%s", name);
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    wsk_keys_append(&app->keys, keypress, app->config.max_keys, &now);
+    *dirty = true;
+}
+
 static void handle_pointer_button_event(struct wsk_app *app,
                                         struct libinput_event_pointer *pevent,
                                         bool *dirty) {
@@ -148,22 +162,40 @@ static void handle_pointer_button_event(struct wsk_app *app,
     }
 
     uint32_t button = libinput_event_pointer_get_button(pevent);
-    struct wsk_keypress *keypress = calloc(1, sizeof(struct wsk_keypress));
-    assert(keypress);
-    keypress->sym = XKB_KEY_NoSymbol;
-    keypress->utf8[0] = '\0';
-
     const char *name = pointer_button_name(button);
-    if (name) {
-        snprintf(keypress->name, sizeof(keypress->name), "%s", name);
-    } else {
-        snprintf(keypress->name, sizeof(keypress->name), "Mouse 0x%x", button);
+    char fallback_name[32];
+    if (!name) {
+        snprintf(fallback_name, sizeof(fallback_name), "Mouse 0x%x", button);
+        name = fallback_name;
     }
 
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    wsk_keys_append(&app->keys, keypress, app->config.max_keys, &now);
-    *dirty = true;
+    append_pointer_event(app, name, dirty);
+}
+
+static void handle_pointer_scroll_wheel_event(
+        struct wsk_app *app, struct libinput_event_pointer *pevent,
+        bool *dirty) {
+    if (libinput_event_pointer_has_axis(
+                pevent, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL)) {
+        double value = libinput_event_pointer_get_scroll_value(
+                pevent, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
+        if (value < 0.0) {
+            append_pointer_event(app, "Mouse Wheel Up", dirty);
+        } else if (value > 0.0) {
+            append_pointer_event(app, "Mouse Wheel Down", dirty);
+        }
+    }
+
+    if (libinput_event_pointer_has_axis(
+                pevent, LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL)) {
+        double value = libinput_event_pointer_get_scroll_value(
+                pevent, LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
+        if (value < 0.0) {
+            append_pointer_event(app, "Mouse Wheel Left", dirty);
+        } else if (value > 0.0) {
+            append_pointer_event(app, "Mouse Wheel Right", dirty);
+        }
+    }
 }
 
 void wsk_input_handle_libinput_event(struct wsk_app *app,
@@ -177,6 +209,10 @@ void wsk_input_handle_libinput_event(struct wsk_app *app,
         case LIBINPUT_EVENT_POINTER_BUTTON:
             handle_pointer_button_event(app, libinput_event_get_pointer_event(event),
                                         dirty);
+            break;
+        case LIBINPUT_EVENT_POINTER_SCROLL_WHEEL:
+            handle_pointer_scroll_wheel_event(
+                    app, libinput_event_get_pointer_event(event), dirty);
             break;
         default:
             break;
