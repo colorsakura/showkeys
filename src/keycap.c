@@ -205,11 +205,11 @@ void wsk_render_keycaps(cairo_t *cairo, struct keycap_layout *layouts,
     if ((config->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT) &&
         !(config->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT) &&
         surface_width > content_width) {
-        x = (int)(surface_width - content_width);
+        x = (int) (surface_width - content_width);
     } else if (!(config->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT) &&
                !(config->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT) &&
                surface_width > content_width) {
-        x = (int)((surface_width - content_width) / 2);
+        x = (int) ((surface_width - content_width) / 2);
     }
 
     for (size_t i = 0; i < key_count; ++i) {

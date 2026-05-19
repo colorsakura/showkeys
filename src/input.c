@@ -173,12 +173,12 @@ static void handle_pointer_button_event(struct wsk_app *app,
 }
 
 static void handle_pointer_scroll_wheel_event(
-        struct wsk_app *app, struct libinput_event_pointer *pevent,
-        bool *dirty) {
+    struct wsk_app *app, struct libinput_event_pointer *pevent,
+    bool *dirty) {
     if (libinput_event_pointer_has_axis(
-                pevent, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL)) {
+        pevent, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL)) {
         double value = libinput_event_pointer_get_scroll_value(
-                pevent, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
+            pevent, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
         if (value < 0.0) {
             append_pointer_event(app, "Mouse Wheel Up", dirty);
         } else if (value > 0.0) {
@@ -187,9 +187,9 @@ static void handle_pointer_scroll_wheel_event(
     }
 
     if (libinput_event_pointer_has_axis(
-                pevent, LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL)) {
+        pevent, LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL)) {
         double value = libinput_event_pointer_get_scroll_value(
-                pevent, LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
+            pevent, LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
         if (value < 0.0) {
             append_pointer_event(app, "Mouse Wheel Left", dirty);
         } else if (value > 0.0) {
@@ -212,7 +212,7 @@ void wsk_input_handle_libinput_event(struct wsk_app *app,
             break;
         case LIBINPUT_EVENT_POINTER_SCROLL_WHEEL:
             handle_pointer_scroll_wheel_event(
-                    app, libinput_event_get_pointer_event(event), dirty);
+                app, libinput_event_get_pointer_event(event), dirty);
             break;
         default:
             break;
