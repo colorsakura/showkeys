@@ -60,15 +60,21 @@ void wsk_render_frame(struct wsk_app *app) {
     cairo_destroy(cairo);
     cairo_surface_destroy(tmp_surface);
 
-    if (height / scale != wl->height || width / scale != wl->width ||
-        wl->width == 0) {
+    const uint32_t target_width = width / scale;
+    const uint32_t target_height = height / scale;
+    const uint32_t reserved_width = target_width * (uint32_t) app->config.max_keys;
+    const bool surface_too_small = target_width > wl->width || target_height > wl->height;
+    const bool surface_too_large = target_height != wl->height ||
+                                   wl->width > reserved_width || wl->width == 0;
+
+    if (surface_too_small || surface_too_large) {
         // Reconfigure surface — no SHM buffer needed yet
         free(layouts);
         if (key_count == 0 || width == 0 || height == 0) {
             wsk_wayland_destroy_layer_surface(wl);
         } else {
-            zwlr_layer_surface_v1_set_size(wl->layer_surface, width / scale,
-                                           height / scale);
+            zwlr_layer_surface_v1_set_size(wl->layer_surface, reserved_width,
+                                           target_height);
         }
 
         // TODO: this could infinite loop if the compositor assigns us a
@@ -111,8 +117,13 @@ void wsk_render_frame(struct wsk_app *app) {
 
     // Draw keycaps directly from the pre-computed layout
     wsk_render_keycaps(shm, layouts, key_count, &app->config,
-                       &app->theme, scale);
+                       &app->theme, scale, wl->width * (uint32_t) scale,
+                       width);
     free(layouts);
+
+    // Ensure all Cairo writes are visible to the compositor before attaching
+    // the SHM buffer to the Wayland surface.
+    cairo_surface_flush(wl->current_buffer->surface);
 
     wl_surface_set_buffer_scale(wl->surface, scale);
     wl_surface_attach(wl->surface, wl->current_buffer->buffer, 0, 0);

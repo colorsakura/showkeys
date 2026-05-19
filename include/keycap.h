@@ -49,7 +49,8 @@ size_t wsk_measure_keycaps(cairo_t *cairo, const struct wsk_keypress *keys,
  */
 void wsk_render_keycaps(cairo_t *cairo, struct keycap_layout *layouts,
                         size_t key_count, const struct wsk_config *config,
-                        struct wsk_theme *theme, int scale);
+                        struct wsk_theme *theme, int scale,
+                        uint32_t surface_width, uint32_t content_width);
 
 /*
  * Combined measure + draw. Convenience wrapper for callers that don't need

@@ -3,6 +3,7 @@
 #include "color.h"
 #include "pango.h"
 #include "theme.h"
+#include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -179,7 +180,8 @@ size_t wsk_measure_keycaps(cairo_t *cairo, const struct wsk_keypress *keys,
 
 void wsk_render_keycaps(cairo_t *cairo, struct keycap_layout *layouts,
                         size_t key_count, const struct wsk_config *config,
-                        struct wsk_theme *theme, int scale) {
+                        struct wsk_theme *theme, int scale,
+                        uint32_t surface_width, uint32_t content_width) {
     const struct keycap_style style = {
         .padding_x = 12,
         .padding_y = 6,
@@ -200,6 +202,16 @@ void wsk_render_keycaps(cairo_t *cairo, struct keycap_layout *layouts,
     const int icon_size = style.icon_size * scale;
 
     int x = 0;
+    if ((config->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT) &&
+        !(config->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT) &&
+        surface_width > content_width) {
+        x = (int)(surface_width - content_width);
+    } else if (!(config->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT) &&
+               !(config->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT) &&
+               surface_width > content_width) {
+        x = (int)((surface_width - content_width) / 2);
+    }
+
     for (size_t i = 0; i < key_count; ++i) {
         struct keycap_layout *layout = &layouts[i];
         layout->x = x;
@@ -244,7 +256,8 @@ void wsk_render_keycaps_to_cairo(cairo_t *cairo, const struct wsk_keypress *keys
     size_t key_count = wsk_measure_keycaps(cairo, keys, config, theme, scale,
                                            width, height, &layouts);
     if (layouts) {
-        wsk_render_keycaps(cairo, layouts, key_count, config, theme, scale);
+        wsk_render_keycaps(cairo, layouts, key_count, config, theme, scale,
+                           *width, *width);
         free(layouts);
     }
 }
