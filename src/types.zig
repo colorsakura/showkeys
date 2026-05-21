@@ -61,11 +61,11 @@ pub const PoolBuffer = struct {
 // Output — Wayland output tracking
 // ---------------------------------------------------------------------------
 
-pub const Output = struct {
+pub const WskOutput = struct {
     output: ?*wl.Output = null,
     scale: i32 = 1,
     subpixel: i32 = 0,
-    next: ?*Output = null,
+    next: ?*WskOutput = null,
 };
 
 // ---------------------------------------------------------------------------
@@ -92,8 +92,8 @@ pub const Wayland = struct {
     frame_callback: ?*wl.Callback = null,
     buffers: [2]PoolBuffer = .{ .{}, .{} },
     current_buffer: ?*PoolBuffer = null,
-    output: ?*Output = null,
-    outputs: ?*Output = null,
+    output: ?*WskOutput = null,
+    outputs: ?*WskOutput = null,
 };
 
 // ---------------------------------------------------------------------------

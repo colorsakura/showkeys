@@ -11,7 +11,7 @@ const zxdg = wl_mod.client.zxdg;
 
 const App = types.App;
 const Wayland = types.Wayland;
-const WskOutput = types.Output;
+const WskOutput = types.WskOutput;
 
 /// Arena allocator for `WskOutput` nodes.
 var output_arena: std.heap.ArenaAllocator = undefined;
