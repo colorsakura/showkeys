@@ -19,8 +19,7 @@ depends=(
 )
 makedepends=(
   'git'
-  'meson'
-  'ninja'
+  'zig'
   'pkgconf'
   'wayland-protocols'
 )
@@ -41,11 +40,10 @@ pkgver() {
 }
 
 build() {
-  arch-meson "${_pkgname}" build \
-    -Ddevpath=/dev/input/
-  meson compile -C build
+  zig build -Doptimize=ReleaseFast -Ddevpath=/dev/input/
 }
 
 package() {
-  meson install -C build --destdir "${pkgdir}"
+  install -Dm755 zig-out/bin/showkeys "${pkgdir}/usr/bin/showkeys"
+  chmod a+s "${pkgdir}/usr/bin/showkeys"
 }

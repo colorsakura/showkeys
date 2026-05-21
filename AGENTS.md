@@ -4,8 +4,6 @@
 
 ShowKeys is a C11 Wayland utility that displays recent keyboard and pointer button presses on screen. It targets Wayland compositors with `wlr_layer_shell_v1` support and reads input through libinput, requiring setuid/root privileges only during startup to open input devices.
 
-Prefer the Zig build for normal development; Meson is also maintained.
-
 ## Common commands
 
 ### Build
@@ -20,16 +18,6 @@ make build
 
 # Optional: restrict the compiled input-device prefix
 zig build -Ddevpath=/dev/input/
-```
-
-### Meson build path
-
-```sh
-meson setup buildDir
-meson compile -C buildDir
-
-# Optional: restrict the compiled input-device prefix
-meson setup buildDir -Ddevpath=/dev/input/
 ```
 
 ### Install / uninstall
@@ -56,7 +44,7 @@ sudo make uninstall
 - `src/shm.c` implements the double-buffered Wayland SHM pool buffers used by rendering.
 - `src/keycap.c`, `src/pango.c`, `src/color.c`, `src/theme.c`, and `src/icons.c` implement visual layout and drawing: Pango text measurement/rendering, color parsing, SVG key backgrounds, and cached special-key icons.
 - `themes/default/key.svg` and `themes/default/icons/*.svg` are the bundled SVG theme assets. `-k path/to/key.svg` makes icons resolve from an `icons/` directory beside that key SVG.
-- `protocols/` contains the vendored layer-shell XML. Zig and Meson both generate client protocol code with `wayland-scanner`; `build.zig`, `protocols/meson.build`, and `src/meson.build` must stay in sync when source files or protocols change.
+- `protocols/` contains the vendored layer-shell XML. The `build.zig` generates Wayland protocol bindings via `zig-wayland`.
 
 ## Design rules
 

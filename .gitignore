@@ -1,5 +1,4 @@
 build/
-buildDir/
 zig-out/
 .zig-cache/
 /.agents/
