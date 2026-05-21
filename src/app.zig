@@ -8,6 +8,7 @@ const theme = @import("theme.zig");
 const devmgr = @import("devmgr.zig");
 const wl = @import("wayland.zig");
 const errno = @import("errno.zig");
+const keycap = @import("keycap.zig");
 
 const App = types.App;
 const KeyList = keys.KeyList;
@@ -87,7 +88,7 @@ pub fn run(app: *App) c_int {
         const anim_dur_ns: i64 = @as(i64, @intCast(app.config.anim_duration)) * 1_000_000;
 
         const key_list: *KeyList = @ptrCast(&app.keys);
-        const has_anim = key_list.hasActiveAnimation(anim_dur_ns, now_ns);
+        const has_anim = key_list.hasActiveAnimation(anim_dur_ns, now_ns) or keycap.shift_active;
         const timeout: c_int = if (has_anim) 16 else if (app.keys.head != null) 100 else -1;
 
         if (c.poll(&pollfds, pollfds.len, timeout) < 0) {

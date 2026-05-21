@@ -46,6 +46,10 @@ pub const Keypress = extern struct {
     /// Absolute monotonic timestamp (nanoseconds) when this keypress
     /// entered its current animation phase.
     anim_start_ns: i64 = 0,
+    /// Current X position of this keycap in the rendered frame
+    /// (logical pixels at scale=1).  Updated every frame via
+    /// interpolation toward the target layout position.
+    render_x: c_int = 0,
 };
 
 /// Owning singly-linked list of keypresses with latest-event timestamp.
@@ -97,14 +101,17 @@ pub const KeyList = extern struct {
     }
 
     /// Returns `true` if any keypress has an animation phase still
-    /// in progress (entering or leaving).
+    /// in progress (entering or shift).
     pub fn hasActiveAnimation(self: *const KeyList, anim_duration_ns: i64, now_ns: i64) bool {
         var key = self.head;
         while (key) |k| : (key = k.next) {
-            if (k.anim_state == .visible) continue;
-            const elapsed = now_ns - k.anim_start_ns;
-            if (elapsed < anim_duration_ns) return true;
+            if (k.anim_state != .visible) {
+                const elapsed = now_ns - k.anim_start_ns;
+                if (elapsed < anim_duration_ns) return true;
+            }
         }
+        // Check if any visible key is still shifting toward its target.
+        // This is handled externally by the caller.
         return false;
     }
 

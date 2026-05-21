@@ -23,6 +23,11 @@ fn ensureLayoutArena() void {
     }
 }
 
+/// Set to `true` by `renderKeycaps()` when any visible key is still
+/// shifting its render_x toward a new target position.
+/// Checked by the event loop to keep the frame loop running.
+pub var shift_active: bool = false;
+
 // ---------------------------------------------------------------------------
 // Constants & types
 // ---------------------------------------------------------------------------
@@ -266,42 +271,78 @@ pub fn renderKeycaps(
     const border_width = style.border_width * scale;
     const icon_size = style.icon_size * scale;
 
-    var x: c_int = 0;
+    // Compute target X positions for all keycaps.
+    // Phase 1: compute layout positions (anchor-aware start offset).
+    var target_x: c_int = 0;
     const anchored_right = (config.anchor & 8) != 0; // ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT = 8
     const anchored_left = (config.anchor & 4) != 0; // ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT = 4
     if (!anchored_left and surface_width > content_width) {
-        x = if (anchored_right)
+        target_x = if (anchored_right)
             @intCast(surface_width - content_width)
         else
             @intCast((surface_width - content_width) / 2);
     }
 
-    // Compute current monotonic time for animation interpolation.
+    // Write target_x into each layout.
+    for (0..key_count) |i| {
+        const layout = &layouts[i];
+        layout.x = target_x;
+        layout.y = 0;
+        target_x += layout.width + gap;
+    }
+
+    // Compute current time for animation interpolation.
     var now_ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now_ts);
     const now_ns = @as(i64, @intCast(now_ts.tv_sec)) * 1_000_000_000 + @as(i64, @intCast(now_ts.tv_nsec));
     const anim_dur_ns: i64 = @as(i64, @intCast(config.anim_duration)) * 1_000_000;
 
+    // Reset shift flag; set back to true if any visible key is moving.
+    shift_active = false;
+
     for (0..key_count) |i| {
         const layout = &layouts[i];
-        layout.x = x;
-        layout.y = 0;
-        x += layout.width + gap;
+        const key_ptr = @as(*Keypress, @constCast(layout.key orelse continue));
+        const target = layout.x;
 
-        const key = layout.key orelse continue;
-        const progress = animProgress(key, now_ns, anim_dur_ns);
+        // ── Shift interpolation ──────────────────────────────────────
+        // Every frame, lerp the key's persistent render_x toward its
+        // target layout position.  This gives a smooth leftward slide
+        // when a new key is appended and pushes older keys over.
+        const shift_lerp_speed: f64 = 0.25; // per-frame interpolation factor
+        if (key_ptr.anim_state == .visible) {
+            const dx = target - key_ptr.render_x;
+            if (@abs(dx) <= 1) {
+                key_ptr.render_x = target;
+            } else {
+                shift_active = true;
+                const step = @as(c_int, @intFromFloat(@as(f64, @floatFromInt(dx)) * shift_lerp_speed));
+                if (step == 0) {
+                    key_ptr.render_x += if (dx > 0) 1 else -1;
+                } else {
+                    key_ptr.render_x += step;
+                }
+            }
+        } else {
+            // Entering keys snap directly to target (the entry
+            // animation handles the visual fade-in/scale-up).
+            key_ptr.render_x = target;
+        }
+
+        // Use the interpolated render_x as the drawing position.
+        const draw_x = key_ptr.render_x;
+
+        const progress = animProgress(key_ptr, now_ns, anim_dur_ns);
         const eased = easeOutCubic(progress);
+        const is_entering = eased < 1.0;
 
-        // If the key is still animating, render into a temporary group
-        // so we can apply the fading alpha to the entire keycap as a unit.
-        if (eased < 1.0) {
+        if (is_entering) {
             c.cairo_push_group(cairo);
         }
 
-        // Translate so the keycap scales from its bottom edge.
         c.cairo_save(cairo);
-        if (eased < 1.0) {
-            const cx = @as(f64, @floatFromInt(layout.x)) + @as(f64, @floatFromInt(layout.width)) / 2.0;
+        if (is_entering) {
+            const cx = @as(f64, @floatFromInt(draw_x)) + @as(f64, @floatFromInt(layout.width)) / 2.0;
             const cy = @as(f64, @floatFromInt(layout.y)) + @as(f64, @floatFromInt(layout.height));
             c.cairo_translate(cairo, cx, cy);
             c.cairo_scale(cairo, 1.0, eased);
@@ -318,11 +359,11 @@ pub fn renderKeycaps(
         }
 
         if (layout.icon_svg != null) {
-            layout.icon_x = layout.x + @divTrunc(layout.width - icon_size, 2);
+            layout.icon_x = draw_x + @divTrunc(layout.width - icon_size, 2);
             layout.icon_y = layout.y + @divTrunc(layout.height - icon_size, 2);
             _ = drawSvgIcon(cairo, layout.icon_svg, layout, icon_size);
         } else {
-            layout.text_x = layout.x + @divTrunc(layout.width - layout.text_width, 2);
+            layout.text_x = draw_x + @divTrunc(layout.width - layout.text_width, 2);
             layout.text_y = layout.y + @divTrunc(layout.height - layout.text_height, 2);
             color.setSourceU32(cairo, if (layout.special) style.special_fg else style.normal_fg);
             c.cairo_move_to(cairo, @floatFromInt(layout.text_x), @floatFromInt(layout.text_y));
@@ -331,8 +372,7 @@ pub fn renderKeycaps(
 
         c.cairo_restore(cairo);
 
-        // Pop the group and paint it with the fading alpha.
-        if (eased < 1.0) {
+        if (is_entering) {
             c.cairo_pop_group_to_source(cairo);
             c.cairo_paint_with_alpha(cairo, eased);
         }
