@@ -1,11 +1,6 @@
 const std = @import("std");
 
-const c_sources = [_][]const u8{
-    "devmgr.c",
-    "input.c",
-    "pango.c",
-    "wayland.c",
-};
+const c_sources = [_][]const u8{};
 
 const pkg_config_deps = [_][]const u8{
     "cairo",
@@ -109,15 +104,24 @@ fn translateCBindings(
         \\#include <stdlib.h>
         \\#include <string.h>
         \\#include <errno.h>
+        \\#include <fcntl.h>
         \\#include <getopt.h>
+        \\#include <limits.h>
         \\#include <sys/mman.h>
+        \\#include <sys/socket.h>
+        \\#include <sys/wait.h>
         \\#include <sys/types.h>
         \\#include <time.h>
         \\#include <unistd.h>
         \\#include <cairo/cairo.h>
+        \\#include <libinput.h>
+        \\#include <libudev.h>
+        \\#include <linux/input-event-codes.h>
         \\#include <wayland-client.h>
+        \\#include <xkbcommon/xkbcommon.h>
         \\#include "config.h"
         \\#include "keys.h"
+        \\#include "xdg-output-unstable-v1-client-protocol.h"
         \\#include "wlr-layer-shell-unstable-v1-client-protocol.h"
         \\uint32_t wsk_color_parse(const char *text, uint32_t fallback);
         \\
@@ -132,6 +136,11 @@ fn translateCBindings(
         \\} GError;
         \\typedef struct _RsvgHandle RsvgHandle;
         \\typedef struct _PangoContext PangoContext;
+        \\typedef struct _PangoLayout PangoLayout;
+        \\typedef struct _PangoAttrList PangoAttrList;
+        \\typedef struct _PangoAttribute PangoAttribute;
+        \\typedef struct _PangoFontDescription PangoFontDescription;
+        \\enum { PANGO_SCALE = 1024 };
         \\typedef unsigned long nfds_t;
         \\struct pollfd {
         \\    int fd;
@@ -245,6 +254,24 @@ fn translateCBindings(
         \\void g_error_free(GError *error);
         \\void g_object_unref(void *object);
         \\PangoContext *pango_cairo_create_context(cairo_t *cr);
+        \\PangoLayout *pango_cairo_create_layout(cairo_t *cr);
+        \\void pango_cairo_update_layout(cairo_t *cr, PangoLayout *layout);
+        \\void pango_cairo_show_layout(cairo_t *cr, PangoLayout *layout);
+        \\void pango_cairo_context_set_font_options(PangoContext *context, const cairo_font_options_t *options);
+        \\PangoAttrList *pango_attr_list_new(void);
+        \\void pango_attr_list_insert(PangoAttrList *list, PangoAttribute *attr);
+        \\void pango_attr_list_unref(PangoAttrList *list);
+        \\PangoAttribute *pango_attr_scale_new(double scale_factor);
+        \\PangoFontDescription *pango_font_description_from_string(const char *str);
+        \\void pango_font_description_free(PangoFontDescription *desc);
+        \\void pango_layout_set_text(PangoLayout *layout, const char *text, int length);
+        \\void pango_layout_set_font_description(PangoLayout *layout, const PangoFontDescription *desc);
+        \\void pango_layout_set_single_paragraph_mode(PangoLayout *layout, gboolean setting);
+        \\void pango_layout_set_attributes(PangoLayout *layout, PangoAttrList *attrs);
+        \\void pango_layout_get_pixel_size(PangoLayout *layout, int *width, int *height);
+        \\int pango_layout_get_baseline(PangoLayout *layout);
+        \\PangoContext *pango_layout_get_context(PangoLayout *layout);
+        \\PangoLayout *get_pango_layout(cairo_t *cairo, const char *font, const char *text, double scale);
         \\void get_text_size(cairo_t *cairo, const char *font, int *width, int *height, int *baseline, double scale, const char *fmt, ...);
         \\void pango_printf(cairo_t *cairo, const char *font, double scale, const char *fmt, ...);
         \\void wsk_cairo_set_source_u32(cairo_t *cr, uint32_t color);
@@ -255,16 +282,20 @@ fn translateCBindings(
         \\void wsk_theme_finish(struct wsk_theme *theme);
         \\bool wsk_svg_draw_to_rect(cairo_t *cr, RsvgHandle *svg, double x, double y, double width, double height, const char *description);
         \\struct pool_buffer *get_next_buffer(struct wl_shm *shm, struct pool_buffer pool[2], uint32_t width, uint32_t height);
+        \\void wsk_render_frame(struct wsk_app *app);
         \\void wsk_wayland_destroy_layer_surface(struct wsk_wayland *wayland);
         \\extern const struct wl_callback_listener frame_listener;
         \\size_t wsk_measure_keycaps(cairo_t *cairo, const struct wsk_keypress *keys, const struct wsk_config *config, struct wsk_theme *theme, int scale, uint32_t *width, uint32_t *height, struct keycap_layout **out_layouts);
         \\void wsk_render_keycaps(cairo_t *cairo, struct keycap_layout *layouts, size_t key_count, const struct wsk_config *config, struct wsk_theme *theme, int scale, uint32_t surface_width, uint32_t content_width);
         \\int devmgr_start(int *fd, pid_t *pid, const char *devpath);
+        \\int devmgr_open(int sockfd, const char *path);
         \\void devmgr_finish(int sock, pid_t pid);
         \\bool wsk_input_init(struct wsk_input *input, struct wsk_app *app);
         \\void wsk_input_finish(struct wsk_input *input);
         \\int wsk_input_get_fd(struct wsk_input *input);
         \\void wsk_input_handle_libinput_event(struct wsk_app *app, struct libinput_event *event, bool *dirty);
+        \\void wsk_input_set_keymap(struct wsk_input *input, struct xkb_keymap *keymap, struct xkb_state *xkb_state);
+        \\void wsk_input_set_keymap_from_fd(struct wsk_input *input, uint32_t format, int32_t fd, uint32_t size);
         \\bool wsk_wayland_init(struct wsk_wayland *wayland, struct wsk_app *app);
         \\void wsk_wayland_finish(struct wsk_wayland *wayland);
         \\int wsk_wayland_get_fd(struct wsk_wayland *wayland);
