@@ -1,11 +1,11 @@
 const std = @import("std");
 const c = @import("c");
+const types = @import("types.zig");
 const icons = @import("icons.zig");
 
-/// Alias for the C wsk_theme struct, maintaining ABI compatibility.
-const Theme = c.struct_wsk_theme;
+const Theme = types.Theme;
 
-/// Arena for path string allocations.  Freed when `finish()` is called.
+/// Arena for path string allocations. Freed when `finish()` is called.
 var path_arena: std.heap.ArenaAllocator = undefined;
 var path_arena_initialized = false;
 
@@ -35,7 +35,7 @@ pub fn init(theme: *Theme, key_svg_path: [*c]const u8) bool {
                 std.mem.sliceTo(err.message, 0)
             else
                 "unknown error";
-            std.log.err("Unable to load key SVG '{s}': {s}", .{ path, message });
+            std.log.err("Unable to load key SVG '{s}': {s}", .{path, message});
             if (error_ptr) |err| {
                 c.g_error_free(err);
             }
@@ -47,7 +47,7 @@ pub fn init(theme: *Theme, key_svg_path: [*c]const u8) bool {
 
 /// Release theme resources: icon cache, path arena, and the key SVG handle.
 pub fn finish(theme: *Theme) void {
-    icons.cacheFinish(&theme.icons);
+    icons.cacheFinish();
     if (path_arena_initialized) {
         path_arena.deinit();
         path_arena_initialized = false;

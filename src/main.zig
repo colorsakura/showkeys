@@ -1,5 +1,6 @@
 const std = @import("std");
 const app = @import("app.zig");
+const types = @import("types.zig");
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
@@ -11,7 +12,7 @@ pub fn main(init: std.process.Init) !void {
     }
     argv[args.len] = null;
 
-    var app_ptr: ?*app.App = null;
+    var app_ptr: ?*types.App = null;
     if (!app.initPrivileged(&app_ptr)) {
         std.process.exit(1);
     }

@@ -1,0 +1,23 @@
+.{
+    .name = .showkeys,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xd83e51380e935c27,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "protocols",
+        "include",
+        "themes",
+        "AGENTS.md",
+        "LICENSE",
+        "README.md",
+    },
+    .dependencies = .{
+        .wayland = .{
+            .url = "https://github.com/ifreund/zig-wayland/archive/refs/tags/v0.6.0.tar.gz",
+            .hash = "wayland-0.6.0-lQa1kqz8AQADQmdNJsNhLoNHcnEGEUjrOaPV-dtEnEmX",
+        },
+    },
+}

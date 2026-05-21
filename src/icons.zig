@@ -6,9 +6,6 @@ const theme = @import("theme.zig");
 // Module-level icon cache (global — only one theme at a time)
 // ---------------------------------------------------------------------------
 
-/// Maps icon basename (e.g. "escape.svg") to an `RsvgHandle`.
-/// A `null` value means the file was not found or failed to load; we cache
-/// failures so we don't retry on every frame.
 var icon_cache: std.StringHashMap(?*c.RsvgHandle) = undefined;
 var icon_cache_initialized = false;
 
@@ -19,7 +16,7 @@ fn ensureCache() void {
     }
 }
 
-fn deinitCache() void {
+pub fn deinitCache() void {
     if (icon_cache_initialized) {
         var it = icon_cache.iterator();
         while (it.next()) |entry| {
@@ -132,10 +129,6 @@ pub fn specialIconName(key_name: []const u8) ?[:0]const u8 {
     return null;
 }
 
-// ---------------------------------------------------------------------------
-// C ABI bridge
-// ---------------------------------------------------------------------------
-
 /// C ABI wrapper for specialIconName.
 pub fn specialIconNameC(key_name: [*c]const u8) [*c]const u8 {
     const key_name_bytes = std.mem.sliceTo(key_name orelse return null, 0);
@@ -144,14 +137,7 @@ pub fn specialIconNameC(key_name: [*c]const u8) [*c]const u8 {
 }
 
 /// Find or load an SVG icon for the given icon name.
-/// Uses a module-level `StringHashMap` instead of the C linked list.
-/// Returns the RsvgHandle, or null if the icon is not found or failed.
-pub fn cacheGet(
-    cache: *c.struct_wsk_icon_cache,
-    base_dir: [*c]const u8,
-    icon_name: [*c]const u8,
-) ?*c.RsvgHandle {
-    _ = cache;
+pub fn cacheGet(base_dir: [*c]const u8, icon_name: [*c]const u8) ?*c.RsvgHandle {
     if (base_dir == null or icon_name == null) return null;
 
     ensureCache();
@@ -183,7 +169,6 @@ pub fn cacheGet(
 }
 
 /// Free all entries in the icon cache.
-pub fn cacheFinish(cache: *c.struct_wsk_icon_cache) void {
-    _ = cache;
+pub fn cacheFinish() void {
     deinitCache();
 }

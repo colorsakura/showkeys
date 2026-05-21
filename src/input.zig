@@ -1,13 +1,15 @@
 const std = @import("std");
 const c = @import("c");
+const types = @import("types.zig");
 const keys = @import("keys.zig");
 const devmgr = @import("devmgr.zig");
 const errno = @import("errno.zig");
 
-/// Type aliases for C structs, maintaining ABI compatibility.
-const Input = c.struct_wsk_input;
-const App = c.struct_wsk_app;
-const Keypress = c.struct_wsk_keypress;
+const Input = types.Input;
+const App = types.App;
+const Keypress = keys.Keypress;
+
+const WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1: u32 = 0;
 
 /// libinput open_restricted callback — delegates to the privileged
 /// device manager via the stored file descriptor.
@@ -29,7 +31,6 @@ const libinput_impl: c.struct_libinput_interface = .{
 };
 
 /// Initialize the input subsystem: udev, libinput context, and xkbcommon.
-/// Returns true on success, false on failure.
 pub fn init(input: *Input, app: *App) bool {
     input.* = .{};
 
@@ -86,37 +87,33 @@ fn pointerButtonName(button: u32) ?[:0]const u8 {
 }
 
 /// Allocate a zero-initialized keypress struct via the Zig memory pool.
-/// Uses `keys.KeyList.createKeypress()` which manages the pool internally;
-/// the returned pointer is cast to the C-compatible struct type for legacy
-/// callsites that still go through the `c.*` bridge.
 fn allocKeypress() !*Keypress {
-    return @ptrCast(try keys.KeyList.createKeypress());
+    return try keys.KeyList.createKeypress();
 }
 
-/// Handle a keyboard key event from libinput: translate the keycode
-/// through xkbcommon and append the keypress to the display list.
+/// Handle a keyboard key event from libinput.
 fn handleKeyboardKeyEvent(app: *App, kbevent: ?*c.struct_libinput_event_keyboard, dirty: *bool) void {
-    const input = &app.input;
-    if (input.xkb_state == null) return;
+    const inp = &app.input;
+    if (inp.xkb_state == null) return;
 
     const keycode: u32 = c.libinput_event_keyboard_get_key(kbevent) + 8;
     const key_state = c.libinput_event_keyboard_get_key_state(kbevent);
     _ = c.xkb_state_update_key(
-        input.xkb_state,
+        inp.xkb_state,
         keycode,
         if (key_state == c.LIBINPUT_KEY_STATE_RELEASED) c.XKB_KEY_UP else c.XKB_KEY_DOWN,
     );
 
-    const keysym = c.xkb_state_key_get_one_sym(input.xkb_state, keycode);
+    const keysym = c.xkb_state_key_get_one_sym(inp.xkb_state, keycode);
 
     if (key_state != c.LIBINPUT_KEY_STATE_PRESSED) return;
 
     const keypress = allocKeypress() catch return;
-    keypress.* = .{ .sym = keysym };
+    keypress.* = .{ .sym = @intCast(keysym) };
 
     _ = c.xkb_keysym_get_name(keysym, @ptrCast(&keypress.name), keypress.name.len);
 
-    if (c.xkb_state_key_get_utf8(input.xkb_state, keycode, @ptrCast(&keypress.utf8), keypress.utf8.len) <= 0 or
+    if (c.xkb_state_key_get_utf8(inp.xkb_state, keycode, @ptrCast(&keypress.utf8), keypress.utf8.len) <= 0 or
         keypress.utf8[0] <= ' ')
     {
         keypress.utf8[0] = 0;
@@ -125,17 +122,17 @@ fn handleKeyboardKeyEvent(app: *App, kbevent: ?*c.struct_libinput_event_keyboard
     var now: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
     const key_list: *keys.KeyList = @ptrCast(&app.keys);
-    key_list.append(@ptrCast(keypress), @intCast(app.config.max_keys), .{
+    key_list.append(keypress, @intCast(app.config.max_keys), .{
         .tv_sec = now.tv_sec,
         .tv_nsec = now.tv_nsec,
     });
     dirty.* = true;
 }
 
-/// Append a named pointer event (button press or scroll) to the key list.
+/// Append a named pointer event to the key list.
 fn appendPointerEvent(app: *App, name: []const u8, dirty: *bool) void {
     const keypress = allocKeypress() catch return;
-    keypress.sym = c.XKB_KEY_NoSymbol;
+    keypress.sym = @intCast(c.XKB_KEY_NoSymbol);
     keypress.utf8[0] = 0;
 
     const copy_len = @min(name.len, keypress.name.len - 1);
@@ -145,7 +142,7 @@ fn appendPointerEvent(app: *App, name: []const u8, dirty: *bool) void {
     var now: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
     const key_list: *keys.KeyList = @ptrCast(&app.keys);
-    key_list.append(@ptrCast(keypress), @intCast(app.config.max_keys), .{
+    key_list.append(keypress, @intCast(app.config.max_keys), .{
         .tv_sec = now.tv_sec,
         .tv_nsec = now.tv_nsec,
     });
@@ -194,7 +191,6 @@ pub fn handleEvent(app: *App, event: ?*c.struct_libinput_event, dirty: *bool) vo
 }
 
 /// Replace the xkb keymap and state on the input subsystem.
-/// Previous keymap/state are unreferenced first.
 fn setKeymap(input: *Input, keymap: ?*c.struct_xkb_keymap, xkb_state: ?*c.struct_xkb_state) void {
     if (input.xkb_keymap) |km| c.xkb_keymap_unref(km);
     if (input.xkb_state) |st| c.xkb_state_unref(st);
@@ -203,7 +199,6 @@ fn setKeymap(input: *Input, keymap: ?*c.struct_xkb_keymap, xkb_state: ?*c.struct
 }
 
 /// Set the keymap from a Wayland file descriptor.
-/// Reads the keymap string via mmap and initialises xkbcommon state.
 pub fn setKeymapFromFd(input: *Input, format: u32, fd: i32, size: u32) void {
     const map_shm = c.mmap(null, size, c.PROT_READ, c.MAP_SHARED, fd, 0);
     if (map_shm == c.MAP_FAILED) {
@@ -212,7 +207,7 @@ pub fn setKeymapFromFd(input: *Input, format: u32, fd: i32, size: u32) void {
         return;
     }
 
-    if (format != c.WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) {
+    if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) {
         _ = c.munmap(map_shm, size);
         _ = c.close(fd);
         return;

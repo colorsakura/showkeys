@@ -5,3 +5,4 @@ zig-out/
 /.agents/
 /.claude/
 .idea/
+zig-pkg/

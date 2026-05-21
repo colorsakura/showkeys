@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const types = @import("types.zig");
 const keys = @import("keys.zig");
 const config = @import("config.zig");
 const input = @import("input.zig");
@@ -8,13 +9,8 @@ const devmgr = @import("devmgr.zig");
 const wl = @import("wayland.zig");
 const errno = @import("errno.zig");
 
-// ---------------------------------------------------------------------------
-// Type aliases
-// ---------------------------------------------------------------------------
-
-pub const App = c.struct_wsk_app;
-
-
+const App = types.App;
+const KeyList = keys.KeyList;
 
 // ---------------------------------------------------------------------------
 // Public API — C ABI
@@ -26,7 +22,7 @@ pub fn initPrivileged(app_ptr: *?*App) bool {
         std.log.err("Failed to allocate app state", .{});
         return false;
     };
-    app.* = undefined;
+    app.* = .{};
     app_ptr.* = app;
 
     if (devmgr.start(&app.devmgr, &app.devmgr_pid, c.INPUTDEVPATH) > 0) {
@@ -39,8 +35,6 @@ pub fn initPrivileged(app_ptr: *?*App) bool {
 
 /// Initialise the app: parse config, load theme, set up input and Wayland.
 pub fn init(app: *App, argc: c_int, argv: [*c][*c]u8) bool {
-    // The Config extern struct shares layout with c.struct_wsk_config, so
-    // the pointer cast is safe — no field conversion needed.
     const cfg: *config.Config = @ptrCast(&app.config);
     config.initDefaults(cfg);
     if (!config.parse(cfg, argc, argv)) return false;
@@ -113,7 +107,7 @@ pub fn run(app: *App) c_int {
 
         var now: c.struct_timespec = undefined;
         _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
-        const key_list: *keys.KeyList = @ptrCast(&app.keys);
+        const key_list: *KeyList = @ptrCast(&app.keys);
         if (key_list.expired(@intCast(app.config.timeout), .{
             .tv_sec = now.tv_sec,
             .tv_nsec = now.tv_nsec,
@@ -129,7 +123,7 @@ pub fn run(app: *App) c_int {
 pub fn finish(app: ?*App) void {
     const state = app orelse return;
 
-    const key_list: *keys.KeyList = @ptrCast(&state.keys);
+    const key_list: *KeyList = @ptrCast(&state.keys);
     key_list.clear();
     theme.finish(&state.theme);
     input.finish(&state.input);
@@ -137,6 +131,5 @@ pub fn finish(app: ?*App) void {
     devmgr.finish(state.devmgr, state.devmgr_pid);
     std.heap.page_allocator.destroy(state);
 
-    // Release the keypress memory pool after all key lists are exhausted.
     keys.deinitModule();
 }

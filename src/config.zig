@@ -28,9 +28,9 @@ pub const Anchor = packed struct {
 };
 
 /// Config is the single source of truth — an `extern struct` whose layout
-/// matches `struct wsk_config` in `include/config.h`.  Every module accesses
-/// the same fields via `c.struct_wsk_config` (translate‑c) which shares the
-/// same ABI, so no conversion layer is needed.
+/// matches `struct wsk_config` from the original C header.
+/// The pointer-cast in `app.zig` (`@ptrCast(&app.config)`) is safe because
+/// `types.Config` and `config.Config` share the same extern layout.
 pub const Config = extern struct {
     foreground: u32 = 0xFFFFFFFF,
     background: u32 = 0x00000000,
@@ -61,7 +61,6 @@ pub fn printUsage() void {
 }
 
 /// Parse an anchor position string into an Anchor bitfield.
-/// Returns null on invalid input.
 pub fn parseAnchor(text: []const u8) ?Anchor {
     if (std.mem.eql(u8, text, "top-right")) return Anchor{ .top = true, .right = true };
     if (std.mem.eql(u8, text, "top-center")) return Anchor{ .top = true };
@@ -76,9 +75,6 @@ pub fn parseAnchor(text: []const u8) ?Anchor {
 }
 
 /// Parse command-line arguments (C‑style argc/argv) into the config.
-/// Returns `true` on success, `false` on error (error message already logged).
-/// `-h` prints usage and returns `false`; `-o` sets `exit_after_parse` and
-/// returns `true`.
 pub fn parse(config: *Config, argc: i32, argv: [*c][*c]u8) bool {
     var i: i32 = 1;
     while (i < argc) : (i += 1) {
