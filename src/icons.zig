@@ -1,8 +1,12 @@
+const std = @import("std");
 const c = @import("c");
 
+const IconCache = c.struct_wsk_icon_cache;
+const IconCacheEntry = c.struct_wsk_icon_cache_entry;
+
 const IconMapEntry = struct {
-    key_name: [*:0]const u8,
-    icon_name: [*:0]const u8,
+    key_name: []const u8,
+    icon_name: [:0]const u8,
 };
 
 const icon_map = [_]IconMapEntry{
@@ -88,54 +92,51 @@ const icon_map = [_]IconMapEntry{
     .{ .key_name = "Mouse Back", .icon_name = "mouse-back.svg" },
 };
 
-export fn wsk_special_icon_name(key_name: [*c]const u8) [*c]const u8 {
+pub fn specialIconName(key_name: []const u8) ?[:0]const u8 {
     for (icon_map) |entry| {
-        if (c.strcmp(key_name, entry.key_name) == 0) {
+        if (std.mem.eql(u8, key_name, entry.key_name)) {
             return entry.icon_name;
         }
     }
     return null;
 }
 
+export fn wsk_special_icon_name(key_name: [*c]const u8) [*c]const u8 {
+    if (key_name == null) {
+        return null;
+    }
+
+    const key_name_bytes = std.mem.sliceTo(key_name, 0);
+    const icon_name = specialIconName(key_name_bytes) orelse return null;
+    return icon_name.ptr;
+}
+
 export fn wsk_icon_cache_get(
-    cache: *c.struct_wsk_icon_cache,
+    cache: *IconCache,
     base_dir: [*c]const u8,
     icon_name: [*c]const u8,
 ) ?*c.RsvgHandle {
-    if (base_dir == null or icon_name == null) {
+    if (base_dir == null) {
+        return null;
+    }
+    if (icon_name == null) {
         return null;
     }
 
-    var current = cache.entries;
-    while (current) |entry| {
-        if (c.strcmp(entry[0].icon_name, icon_name) == 0) {
-            return if (entry[0].failed) null else entry[0].svg;
-        }
-        current = entry[0].next;
+    const icon_name_bytes = std.mem.sliceTo(icon_name, 0);
+    if (findIconCacheEntry(cache, icon_name_bytes)) |entry| {
+        return if (entry.failed) null else entry.svg;
     }
 
-    const allocation = c.calloc(1, @sizeOf(c.struct_wsk_icon_cache_entry)) orelse return null;
-    const entry: *c.struct_wsk_icon_cache_entry = @ptrCast(@alignCast(allocation));
-
-    entry.icon_name = c.wsk_xstrdup(icon_name);
-    if (entry.icon_name == null) {
-        c.free(entry);
-        return null;
-    }
+    const entry = createIconCacheEntry(icon_name) orelse return null;
+    errdefer destroyIconCacheEntry(entry);
 
     const path = c.wsk_join_path3(base_dir, "icons", icon_name);
     if (path == null) {
         entry.failed = true;
     } else {
-        var error_ptr: ?*c.GError = null;
-        entry.svg = c.rsvg_handle_new_from_file(path, &error_ptr);
-        if (entry.svg == null) {
-            entry.failed = true;
-            if (error_ptr != null) {
-                c.g_error_free(error_ptr);
-            }
-        }
-        c.free(path);
+        defer c.free(path);
+        entry.svg = loadSvg(path, &entry.failed);
     }
 
     entry.next = cache.entries;
@@ -143,16 +144,65 @@ export fn wsk_icon_cache_get(
     return if (entry.failed) null else entry.svg;
 }
 
-export fn wsk_icon_cache_finish(cache: *c.struct_wsk_icon_cache) void {
-    var icons = cache.entries;
-    while (icons) |entry| {
+export fn wsk_icon_cache_finish(cache: *IconCache) void {
+    var icon = cache.entries;
+    while (icon) |entry| {
         const next = entry[0].next;
-        if (entry[0].svg != null) {
-            c.g_object_unref(entry[0].svg);
-        }
-        c.free(entry[0].icon_name);
-        c.free(entry);
-        icons = next;
+        destroyIconCacheEntry(@ptrCast(@alignCast(&entry[0])));
+        icon = next;
     }
     cache.entries = null;
+}
+
+fn findIconCacheEntry(cache: *const IconCache, icon_name: []const u8) ?*IconCacheEntry {
+    var current = cache.entries;
+    while (current) |entry| {
+        const cached_name = std.mem.sliceTo(entry[0].icon_name, 0);
+        if (std.mem.eql(u8, cached_name, icon_name)) {
+            return @ptrCast(@alignCast(&entry[0]));
+        }
+        current = entry[0].next;
+    }
+    return null;
+}
+
+fn createIconCacheEntry(icon_name: [*c]const u8) ?*IconCacheEntry {
+    const allocation = c.malloc(@sizeOf(IconCacheEntry)) orelse return null;
+    const entry: *IconCacheEntry = @ptrCast(@alignCast(allocation));
+    entry.* = .{
+        .icon_name = null,
+        .svg = null,
+        .failed = false,
+        .next = null,
+    };
+
+    entry.icon_name = c.wsk_xstrdup(icon_name);
+    if (entry.icon_name == null) {
+        c.free(entry);
+        return null;
+    }
+    return entry;
+}
+
+fn destroyIconCacheEntry(entry: *IconCacheEntry) void {
+    if (entry.svg) |svg| {
+        c.g_object_unref(svg);
+    }
+    c.free(entry.icon_name);
+    c.free(entry);
+}
+
+fn loadSvg(path: [*c]const u8, failed: *bool) ?*c.RsvgHandle {
+    var error_ptr: ?*c.GError = null;
+    const svg = c.rsvg_handle_new_from_file(path, &error_ptr);
+    if (svg == null) {
+        failed.* = true;
+        if (error_ptr) |err| {
+            c.g_error_free(err);
+        }
+        return null;
+    }
+
+    failed.* = false;
+    return svg;
 }
