@@ -2,3 +2,6 @@ build/
 buildDir/
 zig-out/
 .zig-cache/
+/.agents/
+/.claude/
+.idea/
