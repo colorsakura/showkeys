@@ -9,7 +9,7 @@ const Input = types.Input;
 const App = types.App;
 const Keypress = keys.Keypress;
 
-const WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1: u32 = 0;
+const WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1: u32 = 1;
 
 /// libinput open_restricted callback — delegates to the privileged
 /// device manager via the stored file descriptor.
