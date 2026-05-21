@@ -1,9 +1,11 @@
 const std = @import("std");
-const c = @import("c");
-const errno = @import("errno.zig");
+const linux = std.os.linux;
+
+/// PATH_MAX — POSIX standard value for device path buffers.
+const path_max = 4096;
 
 /// Message type for the privileged child process protocol.
-const MsgType = enum(c_int) {
+const MsgType = enum(u32) {
     open,
     end,
 };
@@ -11,11 +13,8 @@ const MsgType = enum(c_int) {
 /// Message exchanged with the privileged device manager child.
 const Msg = extern struct {
     msg_type: MsgType,
-    path: [c.PATH_MAX]u8,
+    path: [path_max]u8,
 };
-
-/// Maximum PATH_MAX characters for device paths.
-const path_max = c.PATH_MAX;
 
 // ---------------------------------------------------------------------------
 // Ancillary message helpers (CMSG)
@@ -27,18 +26,19 @@ fn cmsgAlign(comptime len: usize) usize {
 }
 
 fn cmsgSpace(comptime len: usize) usize {
-    return cmsgAlign(len) + cmsgAlign(@sizeOf(c.struct_cmsghdr));
+    return cmsgAlign(len) + cmsgAlign(@sizeOf(linux.cmsghdr));
 }
 
 fn cmsgLen(comptime len: usize) usize {
-    return cmsgAlign(@sizeOf(c.struct_cmsghdr)) + len;
+    return cmsgAlign(@sizeOf(linux.cmsghdr)) + len;
 }
 
-const cmsg_control_len = cmsgSpace(@sizeOf(c_int));
+const cmsg_control_len = cmsgSpace(@sizeOf(i32));
 
-fn cmsgData(cmsg: [*c]c.struct_cmsghdr) *c_int {
+/// Get a pointer to the data portion of a cmsghdr (where the file descriptor lives).
+fn cmsgData(cmsg: *align(1) linux.cmsghdr) *i32 {
     const bytes: [*]u8 = @ptrCast(cmsg);
-    return @ptrCast(@alignCast(bytes + cmsgAlign(@sizeOf(c.struct_cmsghdr))));
+    return @ptrCast(@alignCast(bytes + cmsgAlign(@sizeOf(linux.cmsghdr))));
 }
 
 // ---------------------------------------------------------------------------
@@ -46,32 +46,41 @@ fn cmsgData(cmsg: [*c]c.struct_cmsghdr) *c_int {
 // ---------------------------------------------------------------------------
 
 /// Receive a message over a Unix socket, optionally receiving a file descriptor.
-fn recvMsg(sock: c_int, fd_out: ?*c_int, buf: ?*anyopaque, buf_len: usize) isize {
-    var control: [cmsg_control_len]u8 align(@alignOf(c.struct_cmsghdr)) = .{0} ** cmsg_control_len;
-    var iovec: c.struct_iovec = .{
-        .iov_base = buf,
-        .iov_len = buf_len,
-    };
-    var message: c.struct_msghdr = .{};
+fn recvMsg(sock: i32, fd_out: ?*i32, buf: ?*anyopaque, buf_len: usize) isize {
+    var control: [cmsg_control_len]u8 align(@alignOf(linux.cmsghdr)) = @splat(0);
+
+    var message: linux.msghdr = std.mem.zeroes(linux.msghdr);
 
     if (buf != null) {
-        message.msg_iov = &iovec;
-        message.msg_iovlen = 1;
+        var iovec = std.posix.iovec{
+            .base = @as([*]u8, @ptrCast(buf.?)),
+            .len = buf_len,
+        };
+        message.iov = @as([*]std.posix.iovec, @ptrCast(&iovec));
+        message.iovlen = 1;
     }
     if (fd_out != null) {
-        message.msg_control = &control;
-        message.msg_controllen = control.len;
+        message.control = &control;
+        message.controllen = control.len;
     }
 
     var ret: isize = undefined;
     while (true) {
-        ret = c.recvmsg(sock, &message, c.MSG_CMSG_CLOEXEC);
-        if (!(ret < 0 and errno.get() == c.EINTR)) break;
+        const rc = linux.recvmsg(sock, &message, @as(u32, linux.MSG.CMSG_CLOEXEC));
+        const err = linux.errno(rc);
+        if (err == .SUCCESS) {
+            ret = @as(isize, @intCast(rc));
+            break;
+        }
+        if (err != .INTR) {
+            ret = -1;
+            break;
+        }
     }
 
     if (fd_out) |out| {
-        out.* = if (c.CMSG_FIRSTHDR(&message)) |cmsg|
-            cmsgData(cmsg).*
+        out.* = if (message.controllen > 0)
+            cmsgData(@as(*align(1) linux.cmsghdr, @ptrCast(&control))).*
         else
             -1;
     }
@@ -80,35 +89,48 @@ fn recvMsg(sock: c_int, fd_out: ?*c_int, buf: ?*anyopaque, buf_len: usize) isize
 }
 
 /// Send a message over a Unix socket, optionally sending a file descriptor.
-fn sendMsg(sock: c_int, fd: c_int, buf: ?*anyopaque, buf_len: usize) void {
-    var control: [cmsg_control_len]u8 align(@alignOf(c.struct_cmsghdr)) = .{0} ** cmsg_control_len;
-    var iovec: c.struct_iovec = .{
-        .iov_base = buf,
-        .iov_len = buf_len,
-    };
-    var message: c.struct_msghdr = .{};
+fn sendMsg(sock: i32, fd: i32, buf: ?*anyopaque, buf_len: usize) void {
+    var control: [cmsg_control_len]u8 align(@alignOf(linux.cmsghdr)) = @splat(0);
+
+    var message: linux.msghdr = std.mem.zeroes(linux.msghdr);
 
     if (buf != null) {
-        message.msg_iov = &iovec;
-        message.msg_iovlen = 1;
+        var iovec = std.posix.iovec{
+            .base = @as([*]u8, @ptrCast(buf.?)),
+            .len = buf_len,
+        };
+        message.iov = @as([*]std.posix.iovec, @ptrCast(&iovec));
+        message.iovlen = 1;
     }
     if (fd >= 0) {
-        message.msg_control = &control;
-        message.msg_controllen = control.len;
+        message.control = &control;
+        message.controllen = control.len;
 
-        const cmsg = c.CMSG_FIRSTHDR(&message);
-        cmsg[0] = .{
-            .cmsg_len = cmsgLen(@sizeOf(c_int)),
-            .cmsg_level = c.SOL_SOCKET,
-            .cmsg_type = c.SCM_RIGHTS,
+        const cmsg = @as(*align(1) linux.cmsghdr, @ptrCast(&control));
+        cmsg.* = .{
+            .len = cmsgLen(@sizeOf(i32)),
+            .level = @as(i32, @intCast(linux.SOL.SOCKET)),
+            .type = @as(i32, @intCast(linux.SCM.RIGHTS)),
         };
         cmsgData(cmsg).* = fd;
     }
 
-    var ret: isize = undefined;
+    // Build the const version of msghdr for sendmsg.
+    var msg_const = linux.msghdr_const{
+        .name = message.name,
+        .namelen = message.namelen,
+        .iov = @as([*]const std.posix.iovec_const, @ptrCast(message.iov)),
+        .iovlen = message.iovlen,
+        .control = message.control,
+        .controllen = message.controllen,
+        .flags = message.flags,
+    };
+
     while (true) {
-        ret = c.sendmsg(sock, &message, 0);
-        if (!(ret < 0 and errno.get() == c.EINTR)) break;
+        const rc = linux.sendmsg(sock, &msg_const, 0);
+        const err = linux.errno(rc);
+        if (err == .SUCCESS) break;
+        if (err != .INTR) break;
     }
 }
 
@@ -118,27 +140,34 @@ fn sendMsg(sock: c_int, fd: c_int, buf: ?*anyopaque, buf_len: usize) void {
 
 /// The privileged child process event loop: waits for open/end messages
 /// from the parent and opens device nodes on its behalf.
-fn run(sock: c_int, devpath: [*c]const u8) noreturn {
+fn run(sock: i32, devpath: []const u8) noreturn {
     var msg: Msg = undefined;
-    var fdin: c_int = -1;
+    var fdin: i32 = -1;
     var running = true;
 
     while (running and recvMsg(sock, &fdin, &msg, @sizeOf(Msg)) > 0) {
         switch (msg.msg_type) {
             .open => {
-                errno.set(0);
-                const path: [*c]u8 = @ptrCast(&msg.path);
+                const path_slice = std.mem.sliceTo(&msg.path, 0);
 
                 // Security: only allow paths under the compiled devpath prefix.
-                if (c.strstr(path, devpath) != path) {
-                    c.exit(1);
+                if (!std.mem.startsWith(u8, path_slice, devpath)) {
+                    // Path prefix mismatch — abort.
+                    std.process.exit(1);
                 }
 
-                const fd = c.open(path, c.O_RDONLY | c.O_CLOEXEC | c.O_NOCTTY | c.O_NONBLOCK);
-                const ret = errno.get();
-                var ret_msg = ret;
-                sendMsg(sock, if (ret != 0) -1 else fd, &ret_msg, @sizeOf(c_int));
-                if (fd >= 0) _ = c.close(fd);
+                const flags: linux.O = .{
+                    .ACCMODE = @enumFromInt(0), // O_RDONLY
+                    .CLOEXEC = true,
+                    .NONBLOCK = true,
+                    .NOCTTY = true,
+                };
+                const fd = linux.open(@ptrCast(&msg.path), flags, 0);
+                const err = linux.errno(fd);
+                var ret_msg: i32 = @intFromEnum(err);
+                const fd_to_send: i32 = if (err != .SUCCESS) -1 else @as(i32, @intCast(fd));
+                sendMsg(sock, fd_to_send, &ret_msg, @sizeOf(i32));
+                if (err == .SUCCESS) _ = linux.close(@as(linux.fd_t, @intCast(fd)));
             },
             .end => {
                 running = false;
@@ -147,7 +176,7 @@ fn run(sock: c_int, devpath: [*c]const u8) noreturn {
         }
     }
 
-    c.exit(0);
+    std.process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -156,45 +185,65 @@ fn run(sock: c_int, devpath: [*c]const u8) noreturn {
 
 /// Start the privileged device manager child process.
 /// Returns 0 on success, 1 on privilege errors, -1 on system call failures.
-pub fn start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
-    if (c.geteuid() != 0) {
+pub fn start(fd: *i32, pid: *linux.pid_t, devpath: []const u8) i32 {
+    if (linux.geteuid() != 0) {
         std.log.err("showkeys needs to be setuid to read input events", .{});
         return 1;
     }
 
-    var sock: [2]c_int = undefined;
-    if (c.socketpair(c.AF_UNIX, c.SOCK_SEQPACKET, 0, &sock) < 0) {
-        std.log.err("devmgr: socketpair: {s}", .{errno.strerror()});
-        return -1;
+    var sock: [2]i32 = undefined;
+    {
+        const rc = linux.socketpair(
+            @as(u32, linux.AF.UNIX),
+            @as(u32, linux.SOCK.SEQPACKET),
+            0,
+            &sock,
+        );
+        if (linux.errno(rc) != .SUCCESS) {
+            std.log.err("devmgr: socketpair: {s}", .{strerrorFromErrno(linux.errno(rc))});
+            return -1;
+        }
     }
 
-    const child = c.fork();
-    if (child < 0) {
-        std.log.err("devmgr: fork: {s}", .{errno.strerror()});
-        _ = c.close(sock[0]);
-        _ = c.close(sock[1]);
-        return 1;
-    } else if (child == 0) {
-        _ = c.close(sock[0]);
+    const child = linux.fork();
+    const fork_err = linux.errno(child);
+    if (fork_err == .SUCCESS and child == 0) {
+        // Child process
+        _ = linux.close(@as(linux.fd_t, @intCast(sock[0])));
         run(sock[1], devpath);
+    } else if (fork_err != .SUCCESS) {
+        std.log.err("devmgr: fork: {s}", .{strerrorFromErrno(fork_err)});
+        _ = linux.close(@as(linux.fd_t, @intCast(sock[0])));
+        _ = linux.close(@as(linux.fd_t, @intCast(sock[1])));
+        return 1;
     }
 
-    _ = c.close(sock[1]);
+    // Parent process
+    _ = linux.close(@as(linux.fd_t, @intCast(sock[1])));
     fd.* = sock[0];
-    pid.* = child;
+    pid.* = @as(linux.pid_t, @intCast(child));
 
     // Drop privileges in the parent process.
-    if (c.setgid(c.getgid()) != 0) {
-        std.log.err("devmgr: setgid: {s}", .{errno.strerror()});
-        return 1;
+    {
+        const rc = linux.setgid(linux.getgid());
+        if (linux.errno(rc) != .SUCCESS) {
+            std.log.err("devmgr: setgid: {s}", .{strerrorFromErrno(linux.errno(rc))});
+            return 1;
+        }
     }
-    if (c.setuid(c.getuid()) != 0) {
-        std.log.err("devmgr: setuid: {s}", .{errno.strerror()});
-        return 1;
+    {
+        const rc = linux.setuid(linux.getuid());
+        if (linux.errno(rc) != .SUCCESS) {
+            std.log.err("devmgr: setuid: {s}", .{strerrorFromErrno(linux.errno(rc))});
+            return 1;
+        }
     }
-    if (c.setuid(0) != -1) {
-        std.log.err("devmgr: failed to drop root", .{});
-        return 1;
+    {
+        const rc = linux.setuid(0);
+        if (linux.errno(rc) == .SUCCESS) {
+            std.log.err("devmgr: failed to drop root", .{});
+            return 1;
+        }
     }
 
     return 0;
@@ -202,21 +251,25 @@ pub fn start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
 
 /// Open a device node through the privileged child process.
 /// Returns a file descriptor on success, or a negative errno on failure.
-pub fn open(sockfd: c_int, path: [*c]const u8) c_int {
+pub fn open(sockfd: i32, path: [*:0]const u8) i32 {
     var msg: Msg = .{
         .msg_type = .open,
-        .path = @as([path_max]u8, @splat(0)),
+        .path = @splat(0),
     };
-    _ = c.snprintf(@ptrCast(&msg.path), msg.path.len, "%s", path);
+
+    // Copy path into the fixed-size buffer with null terminator.
+    const path_len = std.mem.len(path);
+    const copy_len = @min(path_len, msg.path.len - 1);
+    @memcpy(msg.path[0..copy_len], path[0..copy_len]);
+    msg.path[copy_len] = 0;
 
     sendMsg(sockfd, -1, &msg, @sizeOf(Msg));
 
-    var fd: c_int = -1;
-    var err: c_int = 0;
-    var ret: isize = undefined;
-    var retry: c_int = 0;
+    var fd: i32 = -1;
+    var err: i32 = 0;
+    var retry: i32 = 0;
     while (true) {
-        ret = recvMsg(sockfd, &fd, &err, @sizeOf(c_int));
+        const ret = recvMsg(sockfd, &fd, &err, @sizeOf(i32));
         if (!(ret == 0 and retry < 3)) break;
         retry += 1;
     }
@@ -225,14 +278,36 @@ pub fn open(sockfd: c_int, path: [*c]const u8) c_int {
 }
 
 /// Shut down the device manager child process and wait for it to exit.
-pub fn finish(sock: c_int, pid: c.pid_t) void {
+pub fn finish(sock: i32, pid: linux.pid_t) void {
     var msg: Msg = .{
         .msg_type = .end,
-        .path = @as([path_max]u8, @splat(0)),
+        .path = @splat(0),
     };
 
     sendMsg(sock, -1, &msg, @sizeOf(Msg));
     _ = recvMsg(sock, null, null, 0);
-    _ = c.waitpid(pid, null, 0);
-    _ = c.close(sock);
+    var status: u32 = 0;
+    _ = linux.waitpid(pid, &status, 0);
+    _ = linux.close(@as(linux.fd_t, @intCast(sock)));
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Return a string description for an errno E value (best-effort).
+fn strerrorFromErrno(err: linux.E) []const u8 {
+    return switch (err) {
+        .SUCCESS => "success",
+        .ACCES => "permission denied",
+        .NOENT => "no such file or directory",
+        .NOMEM => "out of memory",
+        .INTR => "interrupted",
+        .AGAIN => "resource temporarily unavailable",
+        .BADF => "bad file descriptor",
+        .FAULT => "bad address",
+        .INVAL => "invalid argument",
+        .SRCH => "no such process",
+        else => "unknown error",
+    };
 }
