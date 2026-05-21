@@ -1,5 +1,5 @@
 build:
-	zig build --release=fast
+	zig build -Doptimize=ReleaseFast
 
 install:
 	cp zig-out/bin/showkeys /usr/bin/showkeys

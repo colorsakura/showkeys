@@ -2,14 +2,12 @@ const std = @import("std");
 
 const c_sources = [_][]const u8{
     "app.c",
-    "color.c",
     "config.c",
     "devmgr.c",
     "icons.c",
     "input.c",
     "keycap.c",
     "keys.c",
-    "main.c",
     "pango.c",
     "render.c",
     "shm.c",
@@ -48,11 +46,13 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "showkeys",
         .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
         }),
         .version = .{ .major = 0, .minor = 1, .patch = 0 },
+        .use_lld = false,
     });
     const root_module = exe.root_module;
 
@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) void {
     const wayland_scanner = b.findProgram(&.{"wayland-scanner"}, &.{}) catch @panic("wayland-scanner not found");
     const protocol_output_dir = generateProtocols(b, root_module, wayland_scanner);
     root_module.addIncludePath(protocol_output_dir);
+    root_module.addImport("c", translateCBindings(b, target, optimize, devpath, protocol_output_dir));
 
     b.installArtifact(exe);
 }
@@ -97,6 +98,46 @@ fn cFlags() []const []const u8 {
         "-Wno-missing-field-initializers",
         "-Wno-unused-parameter",
     };
+}
+
+fn translateCBindings(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    devpath: []const u8,
+    protocol_output_dir: std.Build.LazyPath,
+) *std.Build.Module {
+    const bindings = b.addWriteFiles();
+    const header = bindings.add("showkeys-bindings.h",
+        \\#include <stdbool.h>
+        \\#include <stdint.h>
+        \\#include <cairo/cairo.h>
+        \\
+        \\struct wsk_app;
+        \\bool wsk_app_init_privileged(struct wsk_app **app_ptr);
+        \\bool wsk_app_init(struct wsk_app *app, int argc, char *argv[]);
+        \\int wsk_app_run(struct wsk_app *app);
+        \\void wsk_app_finish(struct wsk_app *app);
+        \\
+    );
+
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = header,
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    translate_c.addIncludePath(b.path("include"));
+    translate_c.addIncludePath(protocol_output_dir);
+    translate_c.defineCMacro("_POSIX_C_SOURCE", "200809L");
+    translate_c.defineCMacro("INPUTDEVPATH", b.fmt("\"{s}\"", .{devpath}));
+
+    for (pkg_config_deps) |dep| {
+        translate_c.linkSystemLibrary(dep, .{ .use_pkg_config = .force });
+    }
+    translate_c.linkSystemLibrary("rt", .{});
+
+    return translate_c.createModule();
 }
 
 fn generateProtocols(b: *std.Build, module: *std.Build.Module, wayland_scanner: []const u8) std.Build.LazyPath {
