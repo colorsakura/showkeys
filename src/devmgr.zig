@@ -1,20 +1,24 @@
 const std = @import("std");
-
 const c = @import("c");
 
+/// Message type for the privileged child process protocol.
 const MsgType = enum(c_int) {
     open,
     end,
 };
 
+/// Message exchanged with the privileged device manager child.
 const Msg = extern struct {
     msg_type: MsgType,
     path: [c.PATH_MAX]u8,
 };
 
-fn errno() c_int {
-    return std.c._errno().*;
-}
+/// Maximum PATH_MAX characters for device paths.
+const path_max = c.PATH_MAX;
+
+// ---------------------------------------------------------------------------
+// Ancillary message helpers (CMSG)
+// ---------------------------------------------------------------------------
 
 fn cmsgAlign(comptime len: usize) usize {
     const alignment = @sizeOf(usize);
@@ -36,6 +40,15 @@ fn cmsgData(cmsg: [*c]c.struct_cmsghdr) *c_int {
     return @ptrCast(@alignCast(bytes + cmsgAlign(@sizeOf(c.struct_cmsghdr))));
 }
 
+// ---------------------------------------------------------------------------
+// Socket message helpers
+// ---------------------------------------------------------------------------
+
+fn errnoValue() c_int {
+    return c.__errno_location().*;
+}
+
+/// Receive a message over a Unix socket, optionally receiving a file descriptor.
 fn recvMsg(sock: c_int, fd_out: ?*c_int, buf: ?*anyopaque, buf_len: usize) isize {
     var control: [cmsg_control_len]u8 align(@alignOf(c.struct_cmsghdr)) = .{0} ** cmsg_control_len;
     var iovec: c.struct_iovec = .{
@@ -48,7 +61,6 @@ fn recvMsg(sock: c_int, fd_out: ?*c_int, buf: ?*anyopaque, buf_len: usize) isize
         message.msg_iov = &iovec;
         message.msg_iovlen = 1;
     }
-
     if (fd_out != null) {
         message.msg_control = &control;
         message.msg_controllen = control.len;
@@ -57,22 +69,20 @@ fn recvMsg(sock: c_int, fd_out: ?*c_int, buf: ?*anyopaque, buf_len: usize) isize
     var ret: isize = undefined;
     while (true) {
         ret = c.recvmsg(sock, &message, c.MSG_CMSG_CLOEXEC);
-        if (!(ret < 0 and errno() == c.EINTR)) {
-            break;
-        }
+        if (!(ret < 0 and errnoValue() == c.EINTR)) break;
     }
 
     if (fd_out) |out| {
-        if (c.CMSG_FIRSTHDR(&message)) |cmsg| {
-            out.* = cmsgData(cmsg).*;
-        } else {
-            out.* = -1;
-        }
+        out.* = if (c.CMSG_FIRSTHDR(&message)) |cmsg|
+            cmsgData(cmsg).*
+        else
+            -1;
     }
 
     return ret;
 }
 
+/// Send a message over a Unix socket, optionally sending a file descriptor.
 fn sendMsg(sock: c_int, fd: c_int, buf: ?*anyopaque, buf_len: usize) void {
     var control: [cmsg_control_len]u8 align(@alignOf(c.struct_cmsghdr)) = .{0} ** cmsg_control_len;
     var iovec: c.struct_iovec = .{
@@ -85,7 +95,6 @@ fn sendMsg(sock: c_int, fd: c_int, buf: ?*anyopaque, buf_len: usize) void {
         message.msg_iov = &iovec;
         message.msg_iovlen = 1;
     }
-
     if (fd >= 0) {
         message.msg_control = &control;
         message.msg_controllen = control.len;
@@ -102,12 +111,16 @@ fn sendMsg(sock: c_int, fd: c_int, buf: ?*anyopaque, buf_len: usize) void {
     var ret: isize = undefined;
     while (true) {
         ret = c.sendmsg(sock, &message, 0);
-        if (!(ret < 0 and errno() == c.EINTR)) {
-            break;
-        }
+        if (!(ret < 0 and errnoValue() == c.EINTR)) break;
     }
 }
 
+// ---------------------------------------------------------------------------
+// Privileged child process
+// ---------------------------------------------------------------------------
+
+/// The privileged child process event loop: waits for open/end messages
+/// from the parent and opens device nodes on its behalf.
 fn run(sock: c_int, devpath: [*c]const u8) noreturn {
     var msg: Msg = undefined;
     var fdin: c_int = -1;
@@ -116,19 +129,19 @@ fn run(sock: c_int, devpath: [*c]const u8) noreturn {
     while (running and recvMsg(sock, &fdin, &msg, @sizeOf(Msg)) > 0) {
         switch (msg.msg_type) {
             .open => {
-                std.c._errno().* = 0;
+                c.__errno_location().* = 0;
                 const path: [*c]u8 = @ptrCast(&msg.path);
+
+                // Security: only allow paths under the compiled devpath prefix.
                 if (c.strstr(path, devpath) != path) {
                     c.exit(1);
                 }
 
                 const fd = c.open(path, c.O_RDONLY | c.O_CLOEXEC | c.O_NOCTTY | c.O_NONBLOCK);
-                const ret = errno();
+                const ret = errnoValue();
                 var ret_msg = ret;
                 sendMsg(sock, if (ret != 0) -1 else fd, &ret_msg, @sizeOf(c_int));
-                if (fd >= 0) {
-                    _ = c.close(fd);
-                }
+                if (fd >= 0) _ = c.close(fd);
             },
             .end => {
                 running = false;
@@ -140,21 +153,27 @@ fn run(sock: c_int, devpath: [*c]const u8) noreturn {
     c.exit(0);
 }
 
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Start the privileged device manager child process.
+/// Returns 0 on success, 1 on privilege errors, -1 on system call failures.
 export fn devmgr_start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
     if (c.geteuid() != 0) {
-        _ = c.fprintf(c.stderr, "showkeys needs to be setuid to read input events\n");
+        std.log.err("showkeys needs to be setuid to read input events", .{});
         return 1;
     }
 
     var sock: [2]c_int = undefined;
     if (c.socketpair(c.AF_UNIX, c.SOCK_SEQPACKET, 0, &sock) < 0) {
-        _ = c.fprintf(c.stderr, "devmgr: socketpair: %s", c.strerror(errno()));
+        std.log.err("devmgr: socketpair: {s}", .{c.strerror(errnoValue())});
         return -1;
     }
 
     const child = c.fork();
     if (child < 0) {
-        _ = c.fprintf(c.stderr, "devmgr: fork: %s", c.strerror(errno()));
+        std.log.err("devmgr: fork: {s}", .{c.strerror(errnoValue())});
         _ = c.close(sock[0]);
         _ = c.close(sock[1]);
         return 1;
@@ -167,25 +186,30 @@ export fn devmgr_start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
     fd.* = sock[0];
     pid.* = child;
 
+    // Drop privileges in the parent process.
     if (c.setgid(c.getgid()) != 0) {
-        _ = c.fprintf(c.stderr, "devmgr: setgid: %s\n", c.strerror(errno()));
+        std.log.err("devmgr: setgid: {s}", .{c.strerror(errnoValue())});
         return 1;
     }
     if (c.setuid(c.getuid()) != 0) {
-        _ = c.fprintf(c.stderr, "devmgr: setuid: %s\n", c.strerror(errno()));
+        std.log.err("devmgr: setuid: {s}", .{c.strerror(errnoValue())});
         return 1;
     }
     if (c.setuid(0) != -1) {
-        _ = c.fprintf(c.stderr, "devmgr: failed to drop root\n");
+        std.log.err("devmgr: failed to drop root", .{});
         return 1;
     }
 
     return 0;
 }
 
+/// Open a device node through the privileged child process.
+/// Returns a file descriptor on success, or a negative errno on failure.
 export fn devmgr_open(sockfd: c_int, path: [*c]const u8) c_int {
-    var msg: Msg = std.mem.zeroes(Msg);
-    msg.msg_type = .open;
+    var msg: Msg = .{
+        .msg_type = .open,
+        .path = @as([path_max]u8, @splat(0)),
+    };
     _ = c.snprintf(@ptrCast(&msg.path), msg.path.len, "%s", path);
 
     sendMsg(sockfd, -1, &msg, @sizeOf(Msg));
@@ -196,18 +220,19 @@ export fn devmgr_open(sockfd: c_int, path: [*c]const u8) c_int {
     var retry: c_int = 0;
     while (true) {
         ret = recvMsg(sockfd, &fd, &err, @sizeOf(c_int));
-        if (!(ret == 0 and retry < 3)) {
-            break;
-        }
+        if (!(ret == 0 and retry < 3)) break;
         retry += 1;
     }
 
     return if (err != 0) -err else fd;
 }
 
+/// Shut down the device manager child process and wait for it to exit.
 export fn devmgr_finish(sock: c_int, pid: c.pid_t) void {
-    var msg: Msg = std.mem.zeroes(Msg);
-    msg.msg_type = .end;
+    var msg: Msg = .{
+        .msg_type = .end,
+        .path = @as([path_max]u8, @splat(0)),
+    };
 
     sendMsg(sock, -1, &msg, @sizeOf(Msg));
     _ = recvMsg(sock, null, null, 0);
