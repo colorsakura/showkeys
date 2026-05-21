@@ -1,4 +1,5 @@
 const c = @import("c");
+const color = @import("color.zig");
 
 fn toCairoSubpixelOrder(subpixel: c.enum_wl_output_subpixel) c.cairo_subpixel_order_t {
     return switch (subpixel) {
@@ -92,7 +93,7 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
     setupFontOptions(shm, wl);
 
     c.cairo_set_operator(shm, c.CAIRO_OPERATOR_SOURCE);
-    c.wsk_cairo_set_source_u32(shm, app.config.background);
+    color.setSourceU32(shm, app.config.background);
     c.cairo_paint(shm);
     c.cairo_set_operator(shm, c.CAIRO_OPERATOR_OVER);
 

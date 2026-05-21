@@ -1,4 +1,5 @@
 const c = @import("c");
+const color = @import("color.zig");
 
 const KeycapStyle = struct {
     padding_x: c_int = 0,
@@ -40,12 +41,12 @@ fn drawCairoKeycap(cairo: ?*c.cairo_t, layout: *allowzero const c.struct_keycap_
         @floatFromInt(layout.height),
         @floatFromInt(radius),
     );
-    c.wsk_cairo_set_source_u32(cairo, if (layout.special) style.special_bg else style.normal_bg);
+    color.setSourceU32(cairo, if (layout.special) style.special_bg else style.normal_bg);
     c.cairo_fill_preserve(cairo);
 
     if (border_width > 0) {
         c.cairo_set_line_width(cairo, @floatFromInt(border_width));
-        c.wsk_cairo_set_source_u32(cairo, style.border);
+        color.setSourceU32(cairo, style.border);
         c.cairo_stroke(cairo);
     } else {
         c.cairo_new_path(cairo);
@@ -253,7 +254,7 @@ export fn wsk_render_keycaps(
 
         layout.text_x = layout.x + @divTrunc(layout.width - layout.text_width, 2);
         layout.text_y = layout.y + @divTrunc(layout.height - layout.text_height, 2);
-        c.wsk_cairo_set_source_u32(cairo, if (layout.special) style.special_fg else style.normal_fg);
+        color.setSourceU32(cairo, if (layout.special) style.special_fg else style.normal_fg);
         c.cairo_move_to(cairo, @floatFromInt(layout.text_x), @floatFromInt(layout.text_y));
         c.pango_printf(cairo, config.font, @floatFromInt(scale), "%s", layout.label);
     }
@@ -269,7 +270,7 @@ export fn wsk_render_keycaps_to_cairo(
     height: *u32,
 ) void {
     c.cairo_set_operator(cairo, c.CAIRO_OPERATOR_SOURCE);
-    c.wsk_cairo_set_source_u32(cairo, config.background);
+    color.setSourceU32(cairo, config.background);
     c.cairo_paint(cairo);
     c.cairo_set_operator(cairo, c.CAIRO_OPERATOR_OVER);
 

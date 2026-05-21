@@ -1,3 +1,5 @@
+const std = @import("std");
+const color = @import("color.zig");
 const c = @import("c");
 
 const usage = "usage: showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] " ++
@@ -32,9 +34,9 @@ export fn wsk_config_parse(config: *c.struct_wsk_config, argc: c_int, argv: [*c]
         }
 
         switch (option) {
-            'b' => config.background = c.wsk_color_parse(c.optarg, 0xFFFFFFFF),
-            'f' => config.foreground = c.wsk_color_parse(c.optarg, 0xFFFFFFFF),
-            's' => config.specialfg = c.wsk_color_parse(c.optarg, 0xFFFFFFFF),
+            'b' => config.background = color.parse(std.mem.span(c.optarg), 0xFFFFFFFF),
+            'f' => config.foreground = color.parse(std.mem.span(c.optarg), 0xFFFFFFFF),
+            's' => config.specialfg = color.parse(std.mem.span(c.optarg), 0xFFFFFFFF),
             'F' => config.font = c.optarg,
             't' => config.timeout = c.atoi(c.optarg),
             'n' => {
