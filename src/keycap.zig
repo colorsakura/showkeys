@@ -70,6 +70,26 @@ const tau: f64 = 6.283185307179586;
 const half_pi: f64 = 1.5707963267948966;
 
 // ---------------------------------------------------------------------------
+// Easing functions
+// ---------------------------------------------------------------------------
+
+/// Ease-out cubic: fast start, smooth deceleration.
+fn easeOutCubic(t: f64) f64 {
+    return 1.0 - std.math.pow(f64, 1.0 - t, 3.0);
+}
+
+/// Compute animation progress for a single keypress.
+/// Returns a value in [0, 1] representing the fraction of animation
+/// completed for entering keys, or 1 for visible keys.
+fn animProgress(key: *const Keypress, now_ns: i64, duration_ns: i64) f64 {
+    if (key.anim_state == .visible) return 1.0;
+    const elapsed = now_ns - key.anim_start_ns;
+    if (elapsed >= duration_ns) return 1.0;
+    if (elapsed <= 0) return 0.0;
+    return @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(duration_ns));
+}
+
+// ---------------------------------------------------------------------------
 // Drawing helpers
 // ---------------------------------------------------------------------------
 
@@ -256,11 +276,37 @@ pub fn renderKeycaps(
             @intCast((surface_width - content_width) / 2);
     }
 
+    // Compute current monotonic time for animation interpolation.
+    var now_ts: c.struct_timespec = undefined;
+    _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now_ts);
+    const now_ns = @as(i64, @intCast(now_ts.tv_sec)) * 1_000_000_000 + @as(i64, @intCast(now_ts.tv_nsec));
+    const anim_dur_ns: i64 = @as(i64, @intCast(config.anim_duration)) * 1_000_000;
+
     for (0..key_count) |i| {
         const layout = &layouts[i];
         layout.x = x;
         layout.y = 0;
         x += layout.width + gap;
+
+        const key = layout.key orelse continue;
+        const progress = animProgress(key, now_ns, anim_dur_ns);
+        const eased = easeOutCubic(progress);
+
+        // If the key is still animating, render into a temporary group
+        // so we can apply the fading alpha to the entire keycap as a unit.
+        if (eased < 1.0) {
+            c.cairo_push_group(cairo);
+        }
+
+        // Translate so the keycap scales from its bottom edge.
+        c.cairo_save(cairo);
+        if (eased < 1.0) {
+            const cx = @as(f64, @floatFromInt(layout.x)) + @as(f64, @floatFromInt(layout.width)) / 2.0;
+            const cy = @as(f64, @floatFromInt(layout.y)) + @as(f64, @floatFromInt(layout.height));
+            c.cairo_translate(cairo, cx, cy);
+            c.cairo_scale(cairo, 1.0, eased);
+            c.cairo_translate(cairo, -cx, -cy);
+        }
 
         const svg_ok = theme.key_svg != null and !theme.key_svg_failed and drawSvgKeycap(cairo, theme.key_svg, layout);
         if (!svg_ok) {
@@ -275,14 +321,21 @@ pub fn renderKeycaps(
             layout.icon_x = layout.x + @divTrunc(layout.width - icon_size, 2);
             layout.icon_y = layout.y + @divTrunc(layout.height - icon_size, 2);
             _ = drawSvgIcon(cairo, layout.icon_svg, layout, icon_size);
-            continue;
+        } else {
+            layout.text_x = layout.x + @divTrunc(layout.width - layout.text_width, 2);
+            layout.text_y = layout.y + @divTrunc(layout.height - layout.text_height, 2);
+            color.setSourceU32(cairo, if (layout.special) style.special_fg else style.normal_fg);
+            c.cairo_move_to(cairo, @floatFromInt(layout.text_x), @floatFromInt(layout.text_y));
+            pango.printf(cairo, config.font, @floatFromInt(scale), "%s", layout.label);
         }
 
-        layout.text_x = layout.x + @divTrunc(layout.width - layout.text_width, 2);
-        layout.text_y = layout.y + @divTrunc(layout.height - layout.text_height, 2);
-        color.setSourceU32(cairo, if (layout.special) style.special_fg else style.normal_fg);
-        c.cairo_move_to(cairo, @floatFromInt(layout.text_x), @floatFromInt(layout.text_y));
-        pango.printf(cairo, config.font, @floatFromInt(scale), "%s", layout.label);
+        c.cairo_restore(cairo);
+
+        // Pop the group and paint it with the fading alpha.
+        if (eased < 1.0) {
+            c.cairo_pop_group_to_source(cairo);
+            c.cairo_paint_with_alpha(cairo, eased);
+        }
     }
 }
 

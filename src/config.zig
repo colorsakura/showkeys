@@ -43,6 +43,8 @@ pub const Config = extern struct {
     margin: i32 = 32,
     exit_after_parse: bool = false,
     exit_code: i32 = 0,
+    /// Animation duration in milliseconds for keypress entry effects.
+    anim_duration: u32 = 200,
 };
 
 const usage =

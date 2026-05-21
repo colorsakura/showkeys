@@ -78,7 +78,17 @@ pub fn run(app: *App) c_int {
         }
         if (errno.get() != 0 and !errno.isAgain()) break;
 
-        const timeout: c_int = if (app.keys.head != null) 100 else -1;
+        // Dynamic poll timeout: short (16 ms ≈ 60 fps) when animations
+        // are active, 100 ms when keys are visible (for expiration
+        // checks), and infinite (-1) when idle.
+        var now_ts: c.struct_timespec = undefined;
+        _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now_ts);
+        const now_ns = @as(i64, @intCast(now_ts.tv_sec)) * 1_000_000_000 + @as(i64, @intCast(now_ts.tv_nsec));
+        const anim_dur_ns: i64 = @as(i64, @intCast(app.config.anim_duration)) * 1_000_000;
+
+        const key_list: *KeyList = @ptrCast(&app.keys);
+        const has_anim = key_list.hasActiveAnimation(anim_dur_ns, now_ns);
+        const timeout: c_int = if (has_anim) 16 else if (app.keys.head != null) 100 else -1;
 
         if (c.poll(&pollfds, pollfds.len, timeout) < 0) {
             std.log.err("poll: {s}", .{errno.strerror()});
@@ -105,14 +115,21 @@ pub fn run(app: *App) c_int {
             break;
         }
 
-        var now: c.struct_timespec = undefined;
-        _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
-        const key_list: *KeyList = @ptrCast(&app.keys);
+        // Tick animation state machine so entering keys become visible
+        // once their duration has elapsed.
+        key_list.tickAnimations(anim_dur_ns, now_ns);
+
         if (key_list.expired(@intCast(app.config.timeout), .{
-            .tv_sec = now.tv_sec,
-            .tv_nsec = now.tv_nsec,
+            .tv_sec = now_ts.tv_sec,
+            .tv_nsec = now_ts.tv_nsec,
         })) {
             key_list.clear();
+            wl.setDirty(app);
+        }
+
+        // When animations are active, schedule another frame to
+        // continue the animation.
+        if (has_anim and app.wayland.layer_configured and app.wayland.surface != null) {
             wl.setDirty(app);
         }
     }

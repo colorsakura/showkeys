@@ -22,9 +22,17 @@ const TimeSpec = extern struct {
     tv_nsec: i64 = 0,
 };
 
+/// Per-keypress animation state.
+pub const AnimState = enum(u8) {
+    entering,
+    visible,
+    leaving,
+    _,
+};
+
 /// A single keypress event with display metadata.
 /// Linked-list node; all fields are public for direct field access
-/// in input.zig (sym, name, utf8).
+/// in input.zig (sym, name, utf8, anim_state, anim_start_ns).
 /// `extern` guarantees in-memory layout matches the C ABI so the
 /// transitional `export fn` bridges can safely pass pointers.
 pub const Keypress = extern struct {
@@ -32,6 +40,12 @@ pub const Keypress = extern struct {
     name: [128]u8 = @splat(0), // display name (NUL-terminated)
     utf8: [128]u8 = @splat(0), // UTF-8 text (NUL-terminated)
     next: ?*Keypress = null,
+    // -- animation fields --
+    /// Current animation phase for this keypress.
+    anim_state: AnimState = .entering,
+    /// Absolute monotonic timestamp (nanoseconds) when this keypress
+    /// entered its current animation phase.
+    anim_start_ns: i64 = 0,
 };
 
 /// Owning singly-linked list of keypresses with latest-event timestamp.
@@ -80,6 +94,30 @@ pub const KeyList = extern struct {
             .tv_nsec = self.last_key.tv_nsec,
         };
         return reachedDeadline(now, deadline);
+    }
+
+    /// Returns `true` if any keypress has an animation phase still
+    /// in progress (entering or leaving).
+    pub fn hasActiveAnimation(self: *const KeyList, anim_duration_ns: i64, now_ns: i64) bool {
+        var key = self.head;
+        while (key) |k| : (key = k.next) {
+            if (k.anim_state == .visible) continue;
+            const elapsed = now_ns - k.anim_start_ns;
+            if (elapsed < anim_duration_ns) return true;
+        }
+        return false;
+    }
+
+    /// Transition any finished entering keys to visible.
+    pub fn tickAnimations(self: *KeyList, anim_duration_ns: i64, now_ns: i64) void {
+        var key = self.head;
+        while (key) |k| : (key = k.next) {
+            if (k.anim_state != .entering) continue;
+            const elapsed = now_ns - k.anim_start_ns;
+            if (elapsed >= anim_duration_ns) {
+                k.anim_state = .visible;
+            }
+        }
     }
 
     // -- internal helpers ---------------------------------------------
