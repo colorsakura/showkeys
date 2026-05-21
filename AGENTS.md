@@ -34,17 +34,6 @@ sudo make uninstall
 
 ## High-level architecture
 
-- `src/main.c` only drives the lifecycle: privileged setup, normal initialization, event loop, cleanup.
-- `src/app.c` owns the central `struct wsk_app` state from `include/app.h`. It initializes configuration, theme, libinput, and Wayland, then polls both libinput and Wayland file descriptors in one loop.
-- `src/devmgr.c` is the privileged helper. At startup it forks a root child that opens evdev paths under compiled `INPUTDEVPATH`, sends file descriptors over a Unix socket, and the parent immediately drops privileges.
-- `src/input.c` connects libinput/udev with the privileged devmgr open callback. It receives the Wayland keymap via `src/wayland.c`, uses xkbcommon to translate keycodes, and appends keyboard or pointer-button presses to `struct wsk_key_list`.
-- `src/keys.c` maintains the linked list of visible keypresses, including max-key trimming and timeout expiration.
-- `src/wayland.c` owns registry binding, output tracking, seat/keyboard listeners, layer-shell surface creation, dirty-state scheduling, and frame callbacks. Rendering is frame-paced via `wl_surface_frame` and only happens once the layer surface is configured.
-- `src/render.c` performs the two-phase frame path: measure keycap layout with a temporary Cairo context, resize/reconfigure the layer surface if needed, then draw directly into the next SHM buffer.
-- `src/shm.c` implements the double-buffered Wayland SHM pool buffers used by rendering.
-- `src/keycap.c`, `src/pango.c`, `src/color.c`, `src/theme.c`, and `src/icons.c` implement visual layout and drawing: Pango text measurement/rendering, color parsing, SVG key backgrounds, and cached special-key icons.
-- `themes/default/key.svg` and `themes/default/icons/*.svg` are the bundled SVG theme assets. `-k path/to/key.svg` makes icons resolve from an `icons/` directory beside that key SVG.
-- `protocols/` contains the vendored layer-shell XML. The `build.zig` generates Wayland protocol bindings via `zig-wayland`.
 
 ## Design rules
 
