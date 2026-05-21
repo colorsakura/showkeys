@@ -243,8 +243,8 @@ pub fn renderKeycaps(
     const icon_size = style.icon_size * scale;
 
     var x: c_int = 0;
-    const anchored_right = (config.anchor & 8) != 0;  // ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT = 8
-    const anchored_left = (config.anchor & 4) != 0;   // ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT = 4
+    const anchored_right = (config.anchor & 8) != 0; // ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT = 8
+    const anchored_left = (config.anchor & 4) != 0; // ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT = 4
     if (!anchored_left and surface_width > content_width) {
         x = if (anchored_right)
             @intCast(surface_width - content_width)

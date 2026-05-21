@@ -28,9 +28,9 @@ const TimeSpec = extern struct {
 /// `extern` guarantees in-memory layout matches the C ABI so the
 /// transitional `export fn` bridges can safely pass pointers.
 pub const Keypress = extern struct {
-    sym: u32 = 0,                      // xkb_keysym_t (uint32_t on all Linux targets)
-    name: [128]u8 = @splat(0),         // display name (NUL-terminated)
-    utf8: [128]u8 = @splat(0),         // UTF-8 text (NUL-terminated)
+    sym: u32 = 0, // xkb_keysym_t (uint32_t on all Linux targets)
+    name: [128]u8 = @splat(0), // display name (NUL-terminated)
+    utf8: [128]u8 = @splat(0), // UTF-8 text (NUL-terminated)
     next: ?*Keypress = null,
 };
 

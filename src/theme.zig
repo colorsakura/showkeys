@@ -35,7 +35,7 @@ pub fn init(theme: *Theme, key_svg_path: [*c]const u8) bool {
                 std.mem.sliceTo(err.message, 0)
             else
                 "unknown error";
-            std.log.err("Unable to load key SVG '{s}': {s}", .{path, message});
+            std.log.err("Unable to load key SVG '{s}': {s}", .{ path, message });
             if (error_ptr) |err| {
                 c.g_error_free(err);
             }
