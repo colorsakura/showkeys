@@ -7,7 +7,7 @@ const Theme = c.struct_wsk_theme;
 
 /// Initialize theme state by loading the key SVG and setting up
 /// the icon cache base directory.
-export fn wsk_theme_init(theme: *Theme, key_svg_path: [*c]const u8) bool {
+pub fn init(theme: *Theme, key_svg_path: [*c]const u8) bool {
     theme.* = .{};
     theme.key_svg_path = key_svg_path;
 
@@ -36,7 +36,7 @@ export fn wsk_theme_init(theme: *Theme, key_svg_path: [*c]const u8) bool {
 
 /// Release theme resources: icon cache, base directory string,
 /// and the key SVG handle.
-export fn wsk_theme_finish(theme: *Theme) void {
+pub fn finish(theme: *Theme) void {
     c.wsk_icon_cache_finish(&theme.icons);
     c.free(theme.base_dir);
     if (theme.key_svg) |svg| {
@@ -46,7 +46,7 @@ export fn wsk_theme_finish(theme: *Theme) void {
 
 /// Duplicate a C string into a new heap-allocated C string.
 /// The caller is responsible for freeing the result with `c.free`.
-export fn wsk_xstrdup(str: [*c]const u8) [*c]u8 {
+pub fn xstrdup(str: [*c]const u8) [*c]u8 {
     const bytes = std.mem.sliceTo(str, 0);
     return allocCopyZ(bytes);
 }
@@ -66,7 +66,7 @@ fn pathDirname(path: [*c]const u8) [*c]u8 {
 /// Join three path components with separators.
 /// Returns a newly allocated C string (caller must free with `c.free`).
 /// Returns null on allocation failure.
-export fn wsk_join_path3(
+pub fn joinPath3(
     dir: [*c]const u8,
     subdir: [*c]const u8,
     file: [*c]const u8,
@@ -101,7 +101,7 @@ export fn wsk_join_path3(
 /// Render an SVG document into a Cairo context within the given bounding rectangle.
 /// Logs errors via `std.log.err` on failure.
 /// Returns true on success, false on failure.
-export fn wsk_svg_draw_to_rect(
+pub fn svgDrawToRect(
     cr: ?*c.cairo_t,
     svg: ?*c.RsvgHandle,
     x: f64,

@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const theme = @import("theme.zig");
 
 // ---------------------------------------------------------------------------
 // Module-level icon cache (global — only one theme at a time)
@@ -162,7 +163,7 @@ export fn wsk_icon_cache_get(
     if (icon_cache.get(name)) |cached| return cached;
 
     // Not cached — load the SVG file.
-    const path = c.wsk_join_path3(base_dir, "icons", icon_name);
+    const path = theme.joinPath3(base_dir, "icons", icon_name);
     if (path == null) {
         icon_cache.put(name, null) catch {};
         return null;

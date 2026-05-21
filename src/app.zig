@@ -2,6 +2,8 @@ const std = @import("std");
 const c = @import("c");
 const keys = @import("keys.zig");
 const config = @import("config.zig");
+const input = @import("input.zig");
+const theme = @import("theme.zig");
 
 // ---------------------------------------------------------------------------
 // Type aliases
@@ -44,9 +46,9 @@ export fn wsk_app_init(app: *App, argc: c_int, argv: [*c][*c]u8) bool {
     if (!config.parse(cfg, argc, argv)) return false;
     if (cfg.exit_after_parse) return true;
 
-    _ = c.wsk_theme_init(&app.theme, app.config.key_svg_path);
+    _ = theme.init(&app.theme, app.config.key_svg_path);
 
-    if (!c.wsk_input_init(&app.input, app)) return false;
+    if (!input.init(&app.input, app)) return false;
     if (!c.wsk_wayland_init(&app.wayland, app)) return false;
 
     return true;
@@ -59,7 +61,7 @@ export fn wsk_app_run(app: *App) c_int {
 
     var pollfds = [_]c.struct_pollfd{
         .{
-            .fd = c.wsk_input_get_fd(&app.input),
+            .fd = input.getFd(&app.input),
             .events = c.POLLIN,
             .revents = 0,
         },
@@ -96,7 +98,7 @@ export fn wsk_app_run(app: *App) c_int {
             }
             var input_dirty = false;
             while (c.libinput_get_event(app.input.libinput)) |event| {
-                c.wsk_input_handle_libinput_event(app, event, &input_dirty);
+                input.handleEvent(app, event, &input_dirty);
                 c.libinput_event_destroy(event);
             }
             if (input_dirty) c.wsk_wayland_set_dirty(app);
@@ -129,8 +131,8 @@ export fn wsk_app_finish(app: ?*App) void {
 
     const key_list: *keys.KeyList = @ptrCast(&state.keys);
     key_list.clear();
-    c.wsk_theme_finish(&state.theme);
-    c.wsk_input_finish(&state.input);
+    theme.finish(&state.theme);
+    input.finish(&state.input);
     c.wsk_wayland_finish(&state.wayland);
     c.devmgr_finish(state.devmgr, state.devmgr_pid);
     c.free(state);

@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const input = @import("input.zig");
 
 /// Type aliases for C structs, maintaining ABI compatibility.
 const App = c.struct_wsk_app;
@@ -89,7 +90,7 @@ const surface_listener: c.struct_wl_surface_listener = .{
 fn keyboardKeymap(data: ?*anyopaque, keyboard: ?*c.struct_wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
     _ = keyboard;
     const app: *App = @ptrCast(@alignCast(data.?));
-    c.wsk_input_set_keymap_from_fd(&app.input, format, fd, size);
+    input.setKeymapFromFd(&app.input, format, fd, size);
 }
 
 fn keyboardEnter(data: ?*anyopaque, keyboard: ?*c.struct_wl_keyboard, serial: u32, surface: ?*c.struct_wl_surface, keys: [*c]c.struct_wl_array) callconv(.c) void {

@@ -28,7 +28,7 @@ const libinput_impl: c.struct_libinput_interface = .{
 
 /// Initialize the input subsystem: udev, libinput context, and xkbcommon.
 /// Returns true on success, false on failure.
-export fn wsk_input_init(input: *Input, app: *App) bool {
+pub fn init(input: *Input, app: *App) bool {
     input.* = .{};
 
     input.udev = c.udev_new();
@@ -57,7 +57,7 @@ export fn wsk_input_init(input: *Input, app: *App) bool {
 }
 
 /// Release input subsystem resources.
-export fn wsk_input_finish(input: *Input) void {
+pub fn finish(input: *Input) void {
     if (input.libinput) |li| _ = c.libinput_unref(li);
     if (input.xkb_context) |ctx| c.xkb_context_unref(ctx);
     if (input.xkb_keymap) |km| c.xkb_keymap_unref(km);
@@ -65,7 +65,7 @@ export fn wsk_input_finish(input: *Input) void {
 }
 
 /// Get the libinput file descriptor for event polling.
-export fn wsk_input_get_fd(input: *Input) c_int {
+pub fn getFd(input: *Input) c_int {
     return c.libinput_get_fd(input.libinput);
 }
 
@@ -182,7 +182,7 @@ fn handlePointerScrollWheelEvent(app: *App, pevent: ?*c.struct_libinput_event_po
 }
 
 /// Dispatch a libinput event to the appropriate handler function.
-export fn wsk_input_handle_libinput_event(app: *App, event: ?*c.struct_libinput_event, dirty: *bool) void {
+pub fn handleEvent(app: *App, event: ?*c.struct_libinput_event, dirty: *bool) void {
     switch (c.libinput_event_get_type(event)) {
         c.LIBINPUT_EVENT_KEYBOARD_KEY => handleKeyboardKeyEvent(app, c.libinput_event_get_keyboard_event(event), dirty),
         c.LIBINPUT_EVENT_POINTER_BUTTON => handlePointerButtonEvent(app, c.libinput_event_get_pointer_event(event), dirty),
@@ -202,7 +202,7 @@ fn setKeymap(input: *Input, keymap: ?*c.struct_xkb_keymap, xkb_state: ?*c.struct
 
 /// Set the keymap from a Wayland file descriptor.
 /// Reads the keymap string via mmap and initialises xkbcommon state.
-export fn wsk_input_set_keymap_from_fd(input: *Input, format: u32, fd: i32, size: u32) void {
+pub fn setKeymapFromFd(input: *Input, format: u32, fd: i32, size: u32) void {
     const map_shm = c.mmap(null, size, c.PROT_READ, c.MAP_SHARED, fd, 0);
     if (map_shm == c.MAP_FAILED) {
         _ = c.close(fd);

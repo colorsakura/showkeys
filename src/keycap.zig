@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const color = @import("color.zig");
+const thm = @import("theme.zig");
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -85,7 +86,7 @@ fn drawCairoKeycap(cairo: ?*c.cairo_t, layout: *allowzero const c.struct_keycap_
 }
 
 fn drawSvgKeycap(cairo: ?*c.cairo_t, svg: ?*c.RsvgHandle, layout: *allowzero const c.struct_keycap_layout) bool {
-    return c.wsk_svg_draw_to_rect(
+    return thm.svgDrawToRect(
         cairo,
         svg,
         @floatFromInt(layout.x),
@@ -97,7 +98,7 @@ fn drawSvgKeycap(cairo: ?*c.cairo_t, svg: ?*c.RsvgHandle, layout: *allowzero con
 }
 
 fn drawSvgIcon(cairo: ?*c.cairo_t, svg: ?*c.RsvgHandle, layout: *allowzero const c.struct_keycap_layout, icon_size: c_int) bool {
-    return c.wsk_svg_draw_to_rect(
+    return thm.svgDrawToRect(
         cairo,
         svg,
         @floatFromInt(layout.icon_x),
