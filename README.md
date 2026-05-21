@@ -1,5 +1,7 @@
 # ShowKeys
 
+[![Wiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/colorsakura/showkeys)
+
 Displays keypresses on screen on supported Wayland compositors (requires
 `wlr_layer_shell_v1` support).
 
