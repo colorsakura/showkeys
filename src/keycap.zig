@@ -1,5 +1,10 @@
+const std = @import("std");
 const c = @import("c");
 const color = @import("color.zig");
+
+// ---------------------------------------------------------------------------
+// Constants & types
+// ---------------------------------------------------------------------------
 
 const KeycapStyle = struct {
     padding_x: c_int = 0,
@@ -15,20 +20,46 @@ const KeycapStyle = struct {
     border: u32 = 0,
 };
 
+/// Default style for keycap rendering.
+const keycap_style: KeycapStyle = .{
+    .padding_x = 12,
+    .padding_y = 6,
+    .gap = 6,
+    .radius = 8,
+    .border_width = 1,
+    .icon_size = 32,
+};
+
+/// Style for keycap rendering with colours applied.
+const keycap_style_filled: KeycapStyle = .{
+    .padding_x = 12,
+    .padding_y = 6,
+    .gap = 6,
+    .radius = 8,
+    .border_width = 1,
+    .icon_size = 32,
+    .normal_bg = 0x222222CC,
+    .special_bg = 0x444444CC,
+    .border = 0xFFFFFF33,
+};
+
+const tau: f64 = 6.283185307179586;
+const half_pi: f64 = 1.5707963267948966;
+
+// ---------------------------------------------------------------------------
+// Drawing helpers
+// ---------------------------------------------------------------------------
+
 fn roundedRectangle(cairo: ?*c.cairo_t, x: f64, y: f64, w: f64, h: f64, radius: f64) void {
     var r = radius;
-    if (r > w / 2.0) {
-        r = w / 2.0;
-    }
-    if (r > h / 2.0) {
-        r = h / 2.0;
-    }
+    if (r > w / 2.0) r = w / 2.0;
+    if (r > h / 2.0) r = h / 2.0;
 
     c.cairo_new_sub_path(cairo);
-    c.cairo_arc(cairo, x + w - r, y + r, r, -1.5707963267948966, 0.0);
-    c.cairo_arc(cairo, x + w - r, y + h - r, r, 0.0, 1.5707963267948966);
-    c.cairo_arc(cairo, x + r, y + h - r, r, 1.5707963267948966, 3.141592653589793);
-    c.cairo_arc(cairo, x + r, y + r, r, 3.141592653589793, 4.71238898038469);
+    c.cairo_arc(cairo, x + w - r, y + r, r, -half_pi, 0.0);
+    c.cairo_arc(cairo, x + w - r, y + h - r, r, 0.0, half_pi);
+    c.cairo_arc(cairo, x + r, y + h - r, r, half_pi, tau * 0.5);
+    c.cairo_arc(cairo, x + r, y + r, r, tau * 0.75, tau);
     c.cairo_close_path(cairo);
 }
 
@@ -77,6 +108,12 @@ fn drawSvgIcon(cairo: ?*c.cairo_t, svg: ?*c.RsvgHandle, layout: *allowzero const
     );
 }
 
+// ---------------------------------------------------------------------------
+// Public API — C ABI
+// ---------------------------------------------------------------------------
+
+/// Measure keycap layouts: compute dimensions for each visible keypress
+/// and return an array of keycap_layout structs.
 export fn wsk_measure_keycaps(
     cairo: ?*c.cairo_t,
     keys: [*c]const c.struct_wsk_keypress,
@@ -95,36 +132,26 @@ export fn wsk_measure_keycaps(
     var key_iter = keys;
     while (key_iter) |key| {
         key_count += 1;
-        key_iter = key[0].next;
+        key_iter = key.*.next;
     }
-    if (key_count == 0) {
-        return 0;
-    }
+    if (key_count == 0) return 0;
 
     const raw_layouts = c.calloc(key_count, @sizeOf(c.struct_keycap_layout)) orelse return 0;
     const layouts: [*c]c.struct_keycap_layout = @ptrCast(@alignCast(raw_layouts));
 
-    const style: KeycapStyle = .{
-        .padding_x = 12,
-        .padding_y = 6,
-        .gap = 6,
-        .radius = 8,
-        .border_width = 1,
-        .icon_size = 32,
-    };
-
-    const padding_x = style.padding_x * scale;
-    const padding_y = style.padding_y * scale;
-    const gap = style.gap * scale;
-    const icon_size = style.icon_size * scale;
+    const s = &keycap_style;
+    const padding_x = s.padding_x * scale;
+    const padding_y = s.padding_y * scale;
+    const gap = s.gap * scale;
+    const icon_size = s.icon_size * scale;
 
     var text_min_width: c_int = 0;
     var text_min_height: c_int = 0;
     var text_min_baseline: c_int = 0;
     c.get_text_size(cairo, config.font, &text_min_width, &text_min_height, &text_min_baseline, @floatFromInt(scale), "M");
 
-    const min_content_width = if (icon_size > text_min_width) icon_size else text_min_width;
-    const min_content_height = if (icon_size > text_min_height) icon_size else text_min_height;
+    const min_content_width = @max(icon_size, text_min_width);
+    const min_content_height = @max(icon_size, text_min_height);
 
     var i: usize = 0;
     var max_width: c_int = 0;
@@ -142,43 +169,29 @@ export fn wsk_measure_keycaps(
 
         var content_width = if (layout.icon_svg != null) icon_size else layout.text_width;
         var content_height = if (layout.icon_svg != null) icon_size else layout.text_height;
-        if (content_width < min_content_width) {
-            content_width = min_content_width;
-        }
-        if (content_height < min_content_height) {
-            content_height = min_content_height;
-        }
+        if (content_width < min_content_width) content_width = min_content_width;
+        if (content_height < min_content_height) content_height = min_content_height;
         layout.width = content_width + padding_x * 2;
         layout.height = content_height + padding_y * 2;
-        if (max_width < layout.width) {
-            max_width = layout.width;
-        }
-        if (max_height < layout.height) {
-            max_height = layout.height;
-        }
+        if (max_width < layout.width) max_width = layout.width;
+        if (max_height < layout.height) max_height = layout.height;
 
-        key_iter = key[0].next;
+        key_iter = key.*.next;
     }
 
     var popup_height = max_height;
-    i = 0;
-    while (i < key_count) : (i += 1) {
-        const layout = &layouts[i];
+    for (0..key_count) |idx| {
+        const layout = &layouts[idx];
         if ((layout.icon_svg != null or !layout.special) and layout.width > popup_height) {
             popup_height = layout.width;
         }
     }
 
     var total_width: usize = 0;
-    i = 0;
-    while (i < key_count) : (i += 1) {
-        const layout = &layouts[i];
+    for (0..key_count) |idx| {
+        const layout = &layouts[idx];
         layout.height = popup_height;
-        if (layout.icon_svg != null or !layout.special) {
-            layout.width = popup_height;
-        } else {
-            layout.width = max_width;
-        }
+        layout.width = if (layout.icon_svg != null or !layout.special) popup_height else max_width;
         total_width += @intCast(layout.width);
     }
 
@@ -188,6 +201,7 @@ export fn wsk_measure_keycaps(
     return key_count;
 }
 
+/// Render measured keycap layouts onto the Cairo context.
 export fn wsk_render_keycaps(
     cairo: ?*c.cairo_t,
     layouts: [*c]c.struct_keycap_layout,
@@ -198,19 +212,9 @@ export fn wsk_render_keycaps(
     surface_width: u32,
     content_width: u32,
 ) void {
-    const style: KeycapStyle = .{
-        .padding_x = 12,
-        .padding_y = 6,
-        .gap = 6,
-        .radius = 8,
-        .border_width = 1,
-        .icon_size = 32,
-        .normal_bg = 0x222222CC,
-        .normal_fg = config.foreground,
-        .special_bg = 0x444444CC,
-        .special_fg = config.specialfg,
-        .border = 0xFFFFFF33,
-    };
+    var style = keycap_style_filled;
+    style.normal_fg = config.foreground;
+    style.special_fg = config.specialfg;
 
     const gap = style.gap * scale;
     const radius = style.radius * scale;
@@ -218,28 +222,25 @@ export fn wsk_render_keycaps(
     const icon_size = style.icon_size * scale;
 
     var x: c_int = 0;
-    if ((config.anchor & c.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT) != 0 and
-        (config.anchor & c.ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT) == 0 and
-        surface_width > content_width)
-    {
-        x = @intCast(surface_width - content_width);
-    } else if ((config.anchor & c.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT) == 0 and
-        (config.anchor & c.ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT) == 0 and
-        surface_width > content_width)
-    {
-        x = @intCast((surface_width - content_width) / 2);
+    const anchored_right = (config.anchor & c.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT) != 0;
+    const anchored_left = (config.anchor & c.ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT) != 0;
+    if (!anchored_left and surface_width > content_width) {
+        x = if (anchored_right)
+            @intCast(surface_width - content_width)
+        else
+            @intCast((surface_width - content_width) / 2);
     }
 
-    var i: usize = 0;
-    while (i < key_count) : (i += 1) {
+    for (0..key_count) |i| {
         const layout = &layouts[i];
         layout.x = x;
         layout.y = 0;
         x += layout.width + gap;
 
-        if (theme.key_svg == null or theme.key_svg_failed or !drawSvgKeycap(cairo, theme.key_svg, layout)) {
+        const svg_ok = theme.key_svg != null and !theme.key_svg_failed and drawSvgKeycap(cairo, theme.key_svg, layout);
+        if (!svg_ok) {
             if (theme.key_svg != null and !theme.key_svg_failed) {
-                _ = c.fprintf(c.stderr, "Falling back to Cairo keycap background\n");
+                std.log.err("Falling back to Cairo keycap background", .{});
                 theme.key_svg_failed = true;
             }
             drawCairoKeycap(cairo, layout, &style, radius, border_width);
@@ -260,6 +261,7 @@ export fn wsk_render_keycaps(
     }
 }
 
+/// Render keycaps directly to a Cairo context (convenience wrapper).
 export fn wsk_render_keycaps_to_cairo(
     cairo: ?*c.cairo_t,
     keys: [*c]const c.struct_wsk_keypress,

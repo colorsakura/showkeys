@@ -1,6 +1,10 @@
 const c = @import("c");
 const color = @import("color.zig");
 
+// ---------------------------------------------------------------------------
+// Font options helpers
+// ---------------------------------------------------------------------------
+
 fn toCairoSubpixelOrder(subpixel: c.enum_wl_output_subpixel) c.cairo_subpixel_order_t {
     return switch (subpixel) {
         c.WL_OUTPUT_SUBPIXEL_HORIZONTAL_RGB => c.CAIRO_SUBPIXEL_ORDER_RGB,
@@ -23,14 +27,25 @@ fn setupFontOptions(cairo: ?*c.cairo_t, wl: *c.struct_wsk_wayland) void {
     c.cairo_font_options_destroy(fo);
 }
 
+// ---------------------------------------------------------------------------
+// Frame rendering — C ABI
+// ---------------------------------------------------------------------------
+
+/// Render a single frame: measure keycaps, resize if needed,
+/// acquire an SHM buffer, draw keycaps, and commit to the surface.
 export fn wsk_render_frame(app: *c.struct_wsk_app) void {
     const wl = &app.wayland;
     const scale: c_int = if (wl.output) |output| output[0].scale else 1;
     var width: u32 = 0;
     var height: u32 = 0;
 
+    // Phase 1: measure keycap sizes using a temporary Cairo context.
     const tmp_surface = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, 1, 1);
     const cairo = c.cairo_create(tmp_surface);
+    defer {
+        c.cairo_destroy(cairo);
+        c.cairo_surface_destroy(tmp_surface);
+    }
     setupFontOptions(cairo, wl);
 
     var layouts: [*c]c.struct_keycap_layout = null;
@@ -45,9 +60,6 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
         &layouts,
     );
 
-    c.cairo_destroy(cairo);
-    c.cairo_surface_destroy(tmp_surface);
-
     const target_width = width / @as(u32, @intCast(scale));
     const target_height = height / @as(u32, @intCast(scale));
     const reserved_width = target_width * @as(u32, @intCast(app.config.max_keys));
@@ -55,16 +67,13 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
     const surface_too_large = target_height != wl.height or wl.width > reserved_width or wl.width == 0;
 
     if (surface_too_small or surface_too_large) {
-        c.free(layouts);
+        defer c.free(layouts);
         if (key_count == 0 or width == 0 or height == 0) {
             c.wsk_wayland_destroy_layer_surface(wl);
         } else {
             c.zwlr_layer_surface_v1_set_size(wl.layer_surface, reserved_width, target_height);
         }
-
-        if (wl.surface != null) {
-            c.wl_surface_commit(wl.surface);
-        }
+        if (wl.surface != null) c.wl_surface_commit(wl.surface);
         return;
     }
 
@@ -73,6 +82,7 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
         return;
     }
 
+    // Phase 2: acquire an SHM buffer and render.
     wl.current_buffer = c.get_next_buffer(
         wl.shm,
         &wl.buffers,
@@ -83,7 +93,7 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
         c.free(layouts);
         return;
     }
-    const shm = wl.current_buffer[0].cairo;
+    const shm: ?*c.cairo_t = wl.current_buffer[0].cairo;
 
     c.cairo_save(shm);
     c.cairo_set_operator(shm, c.CAIRO_OPERATOR_CLEAR);
