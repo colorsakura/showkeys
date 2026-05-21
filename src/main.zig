@@ -3,7 +3,15 @@ const std = @import("std");
 const c = @import("c");
 
 comptime {
+    _ = @import("app.zig");
     _ = @import("color.zig");
+    _ = @import("config.zig");
+    _ = @import("icons.zig");
+    _ = @import("keycap.zig");
+    _ = @import("keys.zig");
+    _ = @import("render.zig");
+    _ = @import("shm.zig");
+    _ = @import("theme.zig");
 }
 
 pub fn main(init: std.process.Init) !void {
