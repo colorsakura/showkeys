@@ -1,94 +1,341 @@
 const std = @import("std");
 const color = @import("color.zig");
-const c = @import("c");
 
-const usage = "usage: showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] " ++
+// Anchor bit values matching zwlr_layer_surface_v1 anchor enum
+pub const anchor_top: u32 = 1;
+pub const anchor_bottom: u32 = 2;
+pub const anchor_left: u32 = 4;
+pub const anchor_right: u32 = 8;
+
+/// Bitfield-compatible packed struct for layer-surface anchor.
+/// Field order must be top(1), bottom(2), left(4), right(8) so that
+/// @bitCast produces the same u32 value as the Wayland protocol enum.
+pub const Anchor = packed struct {
+    top: bool = false,
+    bottom: bool = false,
+    left: bool = false,
+    right: bool = false,
+    _: u28 = 0,
+
+    pub fn toU32(self: Anchor) u32 {
+        return @as(u32, @bitCast(self));
+    }
+
+    pub fn fromU32(v: u32) Anchor {
+        return @as(Anchor, @bitCast(v));
+    }
+};
+
+pub const Config = struct {
+    foreground: u32 = 0xFFFFFFFF,
+    background: u32 = 0x00000000,
+    specialfg: u32 = 0xAAAAAAFF,
+    font: []const u8 = "monospace 24",
+    timeout: u32 = 1,
+    max_keys: u32 = 5,
+    key_svg_path: ?[]const u8 = null,
+    anchor: Anchor = .{ .bottom = true, .right = true },
+    margin: u32 = 32,
+    exit_after_parse: bool = false,
+    exit_code: u32 = 0,
+};
+
+const usage =
+    "usage: showkeys [-b|-f|-s #RRGGBB[AA]] [-F font] " ++
     "[-t timeout] [-n max-keys]\n\t" ++
     "[-a top|left|right|bottom] [-m margin] " ++
     "[-o output] [-k key.svg]\n";
 
-export fn wsk_config_init_defaults(config: *c.struct_wsk_config) void {
-    config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-        c.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-    config.margin = 32;
-    config.background = 0x00000000;
-    config.specialfg = 0xAAAAAAFF;
-    config.foreground = 0xFFFFFFFF;
-    config.font = "monospace 24";
-    config.timeout = 1;
-    config.max_keys = 5;
-    config.key_svg_path = null;
-    config.exit_after_parse = false;
-    config.exit_code = 0;
+pub fn printUsage() void {
+    std.log.info("{s}", .{usage});
 }
 
-export fn wsk_config_print_usage(stream: ?*c.FILE) void {
-    _ = c.fprintf(stream, usage);
+/// Parse an anchor position string into an Anchor bitfield.
+/// Returns null on invalid input.
+pub fn parseAnchor(text: []const u8) ?Anchor {
+    if (std.mem.eql(u8, text, "top-right")) return Anchor{ .top = true, .right = true };
+    if (std.mem.eql(u8, text, "top-center")) return Anchor{ .top = true };
+    if (std.mem.eql(u8, text, "top-left")) return Anchor{ .top = true, .left = true };
+    if (std.mem.eql(u8, text, "bottom-right")) return Anchor{ .bottom = true, .right = true };
+    if (std.mem.eql(u8, text, "bottom-center")) return Anchor{ .bottom = true };
+    if (std.mem.eql(u8, text, "bottom-left")) return Anchor{ .bottom = true, .left = true };
+    if (std.mem.eql(u8, text, "center-right")) return Anchor{ .right = true };
+    if (std.mem.eql(u8, text, "center-left")) return Anchor{ .left = true };
+    if (std.mem.eql(u8, text, "center")) return Anchor{};
+    return null;
 }
 
-export fn wsk_config_parse(config: *c.struct_wsk_config, argc: c_int, argv: [*c][*c]u8) bool {
-    while (true) {
-        const option = c.getopt(argc, argv, "hb:f:s:F:t:n:a:m:o:k:");
-        if (option == -1) {
-            break;
+pub const ParseError = error{
+    UnknownOption,
+    UnknownArgument,
+    InvalidArgument,
+    HelpRequested,
+};
+
+/// Parse command-line arguments into a Config.
+/// `args` should be the full argument list including argv[0] (the program name).
+pub fn parse(args: [][]const u8) ParseError!Config {
+    var self = Config{};
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (arg.len < 2 or arg[0] != '-') {
+            printUsage();
+            return error.UnknownArgument;
         }
-
-        switch (option) {
-            'b' => config.background = color.parse(std.mem.span(c.optarg), 0xFFFFFFFF),
-            'f' => config.foreground = color.parse(std.mem.span(c.optarg), 0xFFFFFFFF),
-            's' => config.specialfg = color.parse(std.mem.span(c.optarg), 0xFFFFFFFF),
-            'F' => config.font = c.optarg,
-            't' => config.timeout = c.atoi(c.optarg),
+        switch (arg[1]) {
+            'b' => {
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-b requires a color argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.background = color.parse(args[i], 0xFFFFFFFF);
+            },
+            'f' => {
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-f requires a color argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.foreground = color.parse(args[i], 0xFFFFFFFF);
+            },
+            's' => {
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-s requires a color argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.specialfg = color.parse(args[i], 0xFFFFFFFF);
+            },
+            'F' => {
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-F requires a font argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.font = args[i];
+            },
+            't' => {
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-t requires a timeout argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.timeout = std.fmt.parseInt(u32, args[i], 10) catch {
+                    std.log.err("Invalid timeout '{s}'", .{args[i]});
+                    return error.InvalidArgument;
+                };
+            },
             'n' => {
-                config.max_keys = c.atoi(c.optarg);
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-n requires a number argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.max_keys = std.fmt.parseInt(u32, args[i], 10) catch {
+                    std.log.err("Invalid max key count '{s}'", .{args[i]});
+                    return error.InvalidArgument;
+                };
+                if (self.max_keys < 1) {
+                    std.log.err("Invalid max key count '{s}'", .{args[i]});
+                    return error.InvalidArgument;
+                }
+            },
+            'a' => {
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-a requires an anchor argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.anchor = parseAnchor(args[i]) orelse {
+                    std.log.err("Invalid anchor value '{s}'", .{args[i]});
+                    return error.InvalidArgument;
+                };
+            },
+            'm' => {
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-m requires a margin argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.margin = std.fmt.parseInt(u32, args[i], 10) catch {
+                    std.log.err("Invalid margin '{s}'", .{args[i]});
+                    return error.InvalidArgument;
+                };
+            },
+            'o' => {
+                std.log.err("-o is unimplemented", .{});
+                self.exit_after_parse = true;
+                self.exit_code = 0;
+                return self;
+            },
+            'k' => {
+                i += 1;
+                if (i >= args.len) {
+                    std.log.err("-k requires a path argument", .{});
+                    printUsage();
+                    return error.InvalidArgument;
+                }
+                self.key_svg_path = args[i];
+            },
+            'h' => {
+                printUsage();
+                return error.HelpRequested;
+            },
+            else => {
+                std.log.err("Unknown option '-{c}'", .{arg[1]});
+                printUsage();
+                return error.UnknownOption;
+            },
+        }
+    }
+    return self;
+}
+
+// ---------------------------------------------------------------------------
+// Backward-compatible C ABI bridge — used by app.zig and keycap.zig until
+// they are migrated to the native Zig API.
+// ---------------------------------------------------------------------------
+
+/// Layout must match `struct wsk_config` in `include/config.h`.
+/// `const char *` fields translate to `?[*:0]const u8`.
+const CConfig = extern struct {
+    foreground: u32,
+    background: u32,
+    specialfg: u32,
+    font: ?[*:0]const u8,
+    timeout: i32,
+    max_keys: i32,
+    key_svg_path: ?[*:0]const u8,
+    anchor: u32,
+    margin: i32,
+    exit_after_parse: bool,
+    exit_code: i32,
+};
+
+export fn wsk_config_init_defaults(config: *CConfig) void {
+    const def = Config{};
+    config.foreground = def.foreground;
+    config.background = def.background;
+    config.specialfg = def.specialfg;
+    config.font = @as(?[*:0]const u8, @ptrCast(def.font.ptr));
+    config.timeout = @intCast(def.timeout);
+    config.max_keys = @intCast(def.max_keys);
+    config.key_svg_path = null;
+    config.anchor = def.anchor.toU32();
+    config.margin = @intCast(def.margin);
+    config.exit_after_parse = def.exit_after_parse;
+    config.exit_code = @intCast(def.exit_code);
+}
+
+export fn wsk_config_print_usage(stream: ?*anyopaque) void {
+    _ = stream;
+    std.log.info("{s}", .{usage});
+}
+
+export fn wsk_config_parse(
+    config: *CConfig,
+    argc: i32,
+    argv: [*c][*c]u8,
+) bool {
+    // Parse C-style args directly (the [*c] type layout is incompatible with
+    // [][]const u8, so we cannot call the Zig parse() here).
+    var i: i32 = 1;
+    while (i < argc) : (i += 1) {
+        const arg = std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0);
+        if (arg.len < 2 or arg[0] != '-') {
+            wsk_config_print_usage(null);
+            return false;
+        }
+        switch (arg[1]) {
+            'b' => {
+                i += 1;
+                if (i >= argc) return false;
+                config.background = color.parse(std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 0xFFFFFFFF);
+            },
+            'f' => {
+                i += 1;
+                if (i >= argc) return false;
+                config.foreground = color.parse(std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 0xFFFFFFFF);
+            },
+            's' => {
+                i += 1;
+                if (i >= argc) return false;
+                config.specialfg = color.parse(std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 0xFFFFFFFF);
+            },
+            'F' => {
+                i += 1;
+                if (i >= argc) return false;
+                config.font = @ptrCast(argv[@as(usize, @intCast(i))]);
+            },
+            't' => {
+                i += 1;
+                if (i >= argc) return false;
+                config.timeout = std.fmt.parseInt(i32, std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 10) catch {
+                    std.log.err("Invalid timeout", .{});
+                    return false;
+                };
+            },
+            'n' => {
+                i += 1;
+                if (i >= argc) return false;
+                config.max_keys = std.fmt.parseInt(i32, std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 10) catch {
+                    std.log.err("Invalid max key count", .{});
+                    return false;
+                };
                 if (config.max_keys < 1) {
-                    _ = c.fprintf(c.stderr, "Invalid max key count '%s'\n", c.optarg);
+                    std.log.err("Invalid max key count", .{});
                     return false;
                 }
             },
-            'a' => parseAnchor(config, c.optarg),
-            'm' => config.margin = c.atoi(c.optarg),
+            'a' => {
+                i += 1;
+                if (i >= argc) return false;
+                const anchor_str = std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0);
+                const anchor = parseAnchor(anchor_str) orelse {
+                    std.log.err("Invalid anchor value '{s}'", .{anchor_str});
+                    return false;
+                };
+                config.anchor = anchor.toU32();
+            },
+            'm' => {
+                i += 1;
+                if (i >= argc) return false;
+                config.margin = std.fmt.parseInt(i32, std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 10) catch {
+                    std.log.err("Invalid margin", .{});
+                    return false;
+                };
+            },
             'o' => {
-                _ = c.fprintf(c.stderr, "-o is unimplemented\n");
+                std.log.err("-o is unimplemented", .{});
                 config.exit_after_parse = true;
                 config.exit_code = 0;
                 return true;
             },
-            'k' => config.key_svg_path = c.optarg,
+            'k' => {
+                i += 1;
+                if (i >= argc) return false;
+                config.key_svg_path = @ptrCast(argv[@as(usize, @intCast(i))]);
+            },
+            'h' => {
+                wsk_config_print_usage(null);
+                return false;
+            },
             else => {
-                wsk_config_print_usage(c.stderr);
+                wsk_config_print_usage(null);
                 return false;
             },
         }
     }
 
     return true;
-}
-
-fn parseAnchor(config: *c.struct_wsk_config, optarg: [*c]const u8) void {
-    if (c.strcmp(optarg, "top-right") == 0) {
-        config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-            c.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-    } else if (c.strcmp(optarg, "top-center") == 0) {
-        config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
-    } else if (c.strcmp(optarg, "top-left") == 0) {
-        config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-            c.ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
-    } else if (c.strcmp(optarg, "bottom-right") == 0) {
-        config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-            c.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-    } else if (c.strcmp(optarg, "bottom-center") == 0) {
-        config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
-    } else if (c.strcmp(optarg, "bottom-left") == 0) {
-        config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-            c.ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
-    } else if (c.strcmp(optarg, "center-right") == 0) {
-        config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-    } else if (c.strcmp(optarg, "center-left") == 0) {
-        config.anchor = c.ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
-    } else if (c.strcmp(optarg, "center") == 0) {
-        config.anchor = 0;
-    } else {
-        _ = c.fprintf(c.stderr, "Invalid anchor value '%s'\n", optarg);
-    }
 }
