@@ -39,18 +39,6 @@ pub const Theme = struct {
     base_dir: [*c]u8 = undefined,
     key_svg: ?*c.RsvgHandle = null,
     key_svg_failed: bool = false,
-    icons: IconCache = .{},
-};
-
-pub const IconCacheEntry = struct {
-    icon_name: ?[*:0]u8 = null,
-    svg: ?*c.RsvgHandle = null,
-    failed: bool = false,
-    next: ?*IconCacheEntry = null,
-};
-
-pub const IconCache = struct {
-    entries: ?*IconCacheEntry = null,
 };
 
 // ---------------------------------------------------------------------------

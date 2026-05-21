@@ -119,14 +119,27 @@ const icon_map = [_]IconMapEntry{
     .{ .key_name = "Mouse Back", .icon_name = "mouse-back.svg" },
 };
 
+// ---------------------------------------------------------------------------
+// Icon name map (HashMap for O(1) lookup)
+// ---------------------------------------------------------------------------
+
+var icon_name_map: std.StringHashMap([:0]const u8) = undefined;
+var icon_name_map_initialized = false;
+
+fn ensureNameMap() void {
+    if (!icon_name_map_initialized) {
+        icon_name_map = std.StringHashMap([:0]const u8).init(std.heap.page_allocator);
+        for (icon_map) |entry| {
+            icon_name_map.put(entry.key_name, entry.icon_name) catch {};
+        }
+        icon_name_map_initialized = true;
+    }
+}
+
 /// Look up the icon filename for a special key name.
 pub fn specialIconName(key_name: []const u8) ?[:0]const u8 {
-    for (icon_map) |entry| {
-        if (std.mem.eql(u8, key_name, entry.key_name)) {
-            return entry.icon_name;
-        }
-    }
-    return null;
+    ensureNameMap();
+    return icon_name_map.get(key_name);
 }
 
 /// C ABI wrapper for specialIconName.
@@ -168,7 +181,11 @@ pub fn cacheGet(base_dir: [*c]const u8, icon_name: [*c]const u8) ?*c.RsvgHandle 
     return result;
 }
 
-/// Free all entries in the icon cache.
+/// Free all entries in the icon cache and the icon name map.
 pub fn cacheFinish() void {
     deinitCache();
+    if (icon_name_map_initialized) {
+        icon_name_map.deinit();
+        icon_name_map_initialized = false;
+    }
 }
