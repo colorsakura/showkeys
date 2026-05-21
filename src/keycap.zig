@@ -331,6 +331,10 @@ pub fn renderKeycaps(
 
         // Use the interpolated render_x as the drawing position.
         const draw_x = key_ptr.render_x;
+        // Temporarily override layout.x so drawSvgKeycap / drawCairoKeycap
+        // use the shifted position rather than the raw target.
+        const layout_x_saved = layout.x;
+        layout.x = draw_x;
 
         const progress = animProgress(key_ptr, now_ns, anim_dur_ns);
         const eased = easeOutCubic(progress);
@@ -376,6 +380,11 @@ pub fn renderKeycaps(
             c.cairo_pop_group_to_source(cairo);
             c.cairo_paint_with_alpha(cairo, eased);
         }
+
+        // Restore layout.x for the caller (render.zig uses it for
+        // content_width calculations; leaving it as draw_x would
+        // cause the reserved width to drift on every frame).
+        layout.x = layout_x_saved;
     }
 }
 
