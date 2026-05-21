@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c");
 const keys = @import("keys.zig");
 const devmgr = @import("devmgr.zig");
+const errno = @import("errno.zig");
 
 /// Type aliases for C structs, maintaining ABI compatibility.
 const Input = c.struct_wsk_input;
@@ -34,13 +35,13 @@ pub fn init(input: *Input, app: *App) bool {
 
     input.udev = c.udev_new();
     if (input.udev == null) {
-        std.log.err("udev_create: {s}", .{c.strerror(c.__errno_location().*)});
+        std.log.err("udev_create: {s}", .{errno.strerror()});
         return false;
     }
 
     input.libinput = c.libinput_udev_create_context(&libinput_impl, &app.devmgr, input.udev);
     if (input.libinput == null) {
-        std.log.err("libinput_udev_create_context: {s}", .{c.strerror(c.__errno_location().*)});
+        std.log.err("libinput_udev_create_context: {s}", .{errno.strerror()});
         _ = c.udev_unref(input.udev);
         input.udev = null;
         return false;
@@ -50,7 +51,7 @@ pub fn init(input: *Input, app: *App) bool {
 
     input.xkb_context = c.xkb_context_new(c.XKB_CONTEXT_NO_FLAGS);
     if (input.xkb_context == null) {
-        std.log.err("xkb_context_new: {s}", .{c.strerror(c.__errno_location().*)});
+        std.log.err("xkb_context_new: {s}", .{errno.strerror()});
         return false;
     }
 
@@ -207,7 +208,7 @@ pub fn setKeymapFromFd(input: *Input, format: u32, fd: i32, size: u32) void {
     const map_shm = c.mmap(null, size, c.PROT_READ, c.MAP_SHARED, fd, 0);
     if (map_shm == c.MAP_FAILED) {
         _ = c.close(fd);
-        std.log.err("Unable to mmap keymap: {s}", .{c.strerror(c.__errno_location().*)});
+        std.log.err("Unable to mmap keymap: {s}", .{errno.strerror()});
         return;
     }
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const errno = @import("errno.zig");
 
 /// Message type for the privileged child process protocol.
 const MsgType = enum(c_int) {
@@ -44,10 +45,6 @@ fn cmsgData(cmsg: [*c]c.struct_cmsghdr) *c_int {
 // Socket message helpers
 // ---------------------------------------------------------------------------
 
-fn errnoValue() c_int {
-    return c.__errno_location().*;
-}
-
 /// Receive a message over a Unix socket, optionally receiving a file descriptor.
 fn recvMsg(sock: c_int, fd_out: ?*c_int, buf: ?*anyopaque, buf_len: usize) isize {
     var control: [cmsg_control_len]u8 align(@alignOf(c.struct_cmsghdr)) = .{0} ** cmsg_control_len;
@@ -69,7 +66,7 @@ fn recvMsg(sock: c_int, fd_out: ?*c_int, buf: ?*anyopaque, buf_len: usize) isize
     var ret: isize = undefined;
     while (true) {
         ret = c.recvmsg(sock, &message, c.MSG_CMSG_CLOEXEC);
-        if (!(ret < 0 and errnoValue() == c.EINTR)) break;
+        if (!(ret < 0 and errno.get() == c.EINTR)) break;
     }
 
     if (fd_out) |out| {
@@ -111,7 +108,7 @@ fn sendMsg(sock: c_int, fd: c_int, buf: ?*anyopaque, buf_len: usize) void {
     var ret: isize = undefined;
     while (true) {
         ret = c.sendmsg(sock, &message, 0);
-        if (!(ret < 0 and errnoValue() == c.EINTR)) break;
+        if (!(ret < 0 and errno.get() == c.EINTR)) break;
     }
 }
 
@@ -129,7 +126,7 @@ fn run(sock: c_int, devpath: [*c]const u8) noreturn {
     while (running and recvMsg(sock, &fdin, &msg, @sizeOf(Msg)) > 0) {
         switch (msg.msg_type) {
             .open => {
-                c.__errno_location().* = 0;
+                errno.set(0);
                 const path: [*c]u8 = @ptrCast(&msg.path);
 
                 // Security: only allow paths under the compiled devpath prefix.
@@ -138,7 +135,7 @@ fn run(sock: c_int, devpath: [*c]const u8) noreturn {
                 }
 
                 const fd = c.open(path, c.O_RDONLY | c.O_CLOEXEC | c.O_NOCTTY | c.O_NONBLOCK);
-                const ret = errnoValue();
+                const ret = errno.get();
                 var ret_msg = ret;
                 sendMsg(sock, if (ret != 0) -1 else fd, &ret_msg, @sizeOf(c_int));
                 if (fd >= 0) _ = c.close(fd);
@@ -167,13 +164,13 @@ pub fn start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
 
     var sock: [2]c_int = undefined;
     if (c.socketpair(c.AF_UNIX, c.SOCK_SEQPACKET, 0, &sock) < 0) {
-        std.log.err("devmgr: socketpair: {s}", .{c.strerror(errnoValue())});
+        std.log.err("devmgr: socketpair: {s}", .{errno.strerror()});
         return -1;
     }
 
     const child = c.fork();
     if (child < 0) {
-        std.log.err("devmgr: fork: {s}", .{c.strerror(errnoValue())});
+        std.log.err("devmgr: fork: {s}", .{errno.strerror()});
         _ = c.close(sock[0]);
         _ = c.close(sock[1]);
         return 1;
@@ -188,11 +185,11 @@ pub fn start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
 
     // Drop privileges in the parent process.
     if (c.setgid(c.getgid()) != 0) {
-        std.log.err("devmgr: setgid: {s}", .{c.strerror(errnoValue())});
+        std.log.err("devmgr: setgid: {s}", .{errno.strerror()});
         return 1;
     }
     if (c.setuid(c.getuid()) != 0) {
-        std.log.err("devmgr: setuid: {s}", .{c.strerror(errnoValue())});
+        std.log.err("devmgr: setuid: {s}", .{errno.strerror()});
         return 1;
     }
     if (c.setuid(0) != -1) {

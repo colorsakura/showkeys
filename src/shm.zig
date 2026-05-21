@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const errno = @import("errno.zig");
 
 /// Alias for the C pool_buffer struct, maintaining ABI compatibility.
 /// Used by exported functions for seamless interop with render.zig via `c.*` calls.
@@ -40,7 +41,7 @@ fn createShmFile() ShmError!std.posix.fd_t {
             _ = c.shm_unlink(&name);
             return @intCast(fd);
         }
-        if (retries == 0 or c.__errno_location().* != c.EEXIST) {
+        if (retries == 0 or errno.get() != c.EEXIST) {
             return error.ShmOpenFailed;
         }
     }
@@ -56,7 +57,7 @@ fn allocateShmFile(size: usize) ShmError!std.posix.fd_t {
     while (true) {
         ret = c.ftruncate(fd, @intCast(size));
         if (ret >= 0) break;
-        if (c.__errno_location().* != c.EINTR) return error.ShmFtruncateFailed;
+        if (errno.get() != c.EINTR) return error.ShmFtruncateFailed;
     }
 
     return fd;

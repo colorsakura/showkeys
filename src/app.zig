@@ -6,6 +6,7 @@ const input = @import("input.zig");
 const theme = @import("theme.zig");
 const devmgr = @import("devmgr.zig");
 const wl = @import("wayland.zig");
+const errno = @import("errno.zig");
 
 // ---------------------------------------------------------------------------
 // Type aliases
@@ -13,10 +14,7 @@ const wl = @import("wayland.zig");
 
 pub const App = c.struct_wsk_app;
 
-/// Get the current errno value via C __errno_location.
-fn errnoPtr() *c_int {
-    return c.__errno_location();
-}
+
 
 // ---------------------------------------------------------------------------
 // Public API — C ABI
@@ -76,26 +74,26 @@ pub fn run(app: *App) c_int {
 
     app.run = true;
     while (app.run) {
-        errnoPtr().* = 0;
+        errno.set(0);
         while (true) {
             if (wl.flush(&app.wayland) == -1) {
-                std.log.err("wl_display_flush: {s}", .{c.strerror(errnoPtr().*)});
+                std.log.err("wl_display_flush: {s}", .{errno.strerror()});
                 break;
             }
-            if (errnoPtr().* != c.EAGAIN) break;
+            if (!errno.isAgain()) break;
         }
-        if (errnoPtr().* != 0 and errnoPtr().* != c.EAGAIN) break;
+        if (errno.get() != 0 and !errno.isAgain()) break;
 
         const timeout: c_int = if (app.keys.head != null) 100 else -1;
 
         if (c.poll(&pollfds, pollfds.len, timeout) < 0) {
-            std.log.err("poll: {s}", .{c.strerror(errnoPtr().*)});
+            std.log.err("poll: {s}", .{errno.strerror()});
             break;
         }
 
         if ((pollfds[0].revents & c.POLLIN) != 0) {
             if (c.libinput_dispatch(app.input.libinput) != 0) {
-                std.log.err("libinput_dispatch: {s}", .{c.strerror(errnoPtr().*)});
+                std.log.err("libinput_dispatch: {s}", .{errno.strerror()});
                 break;
             }
             var input_dirty = false;
@@ -109,7 +107,7 @@ pub fn run(app: *App) c_int {
         if ((pollfds[1].revents & c.POLLIN) != 0 and
             wl.dispatch(&app.wayland, app) == -1)
         {
-            std.log.err("wl_display_dispatch: {s}", .{c.strerror(errnoPtr().*)});
+            std.log.err("wl_display_dispatch: {s}", .{errno.strerror()});
             break;
         }
 

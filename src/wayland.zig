@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c");
 const input = @import("input.zig");
 const render_mod = @import("render.zig");
+const errno = @import("errno.zig");
 
 /// Type aliases for C structs, maintaining ABI compatibility.
 const App = c.struct_wsk_app;
@@ -405,7 +406,7 @@ pub fn init(wayland: *Wayland, app: *App) bool {
 
     wayland.display = c.wl_display_connect(null);
     if (wayland.display == null) {
-        std.log.err("wl_display_connect: {s}", .{c.strerror(c.__errno_location().*)});
+        std.log.err("wl_display_connect: {s}", .{errno.strerror()});
         return false;
     }
 
@@ -467,6 +468,6 @@ pub fn dispatch(wayland: *Wayland, app: *App) c_int {
 /// Flush pending Wayland requests. Returns 0 on success, -1 on error.
 pub fn flush(wayland: *Wayland) c_int {
     const ret = c.wl_display_flush(wayland.display);
-    if (ret == -1 and c.__errno_location().* != c.EAGAIN) return -1;
+    if (ret == -1 and !errno.isAgain()) return -1;
     return 0;
 }
