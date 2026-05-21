@@ -1,9 +1,17 @@
 const std = @import("std");
-
 const c = @import("c");
 
+/// Type aliases for C structs, maintaining ABI compatibility.
+const App = c.struct_wsk_app;
+const Wayland = c.struct_wsk_wayland;
+const WskOutput = c.struct_wsk_output;
+
+// ---------------------------------------------------------------------------
+// Layer surface callbacks
+// ---------------------------------------------------------------------------
+
 fn layerSurfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_zwlr_layer_surface_v1, serial: u32, width: u32, height: u32) callconv(.c) void {
-    const app: *c.struct_wsk_app = @ptrCast(@alignCast(data.?));
+    const app: *App = @ptrCast(@alignCast(data.?));
     const wayland = &app.wayland;
     wayland.width = width;
     wayland.height = height;
@@ -15,13 +23,22 @@ fn layerSurfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_zwlr_layer_surfa
 
 fn layerSurfaceClosed(data: ?*anyopaque, surface: ?*c.struct_zwlr_layer_surface_v1) callconv(.c) void {
     _ = surface;
-    const app: *c.struct_wsk_app = @ptrCast(@alignCast(data.?));
+    const app: *App = @ptrCast(@alignCast(data.?));
     app.run = false;
 }
 
+const layer_surface_listener: c.struct_zwlr_layer_surface_v1_listener = .{
+    .configure = layerSurfaceConfigure,
+    .closed = layerSurfaceClosed,
+};
+
+// ---------------------------------------------------------------------------
+// Surface callbacks
+// ---------------------------------------------------------------------------
+
 fn surfaceEnter(data: ?*anyopaque, surface: ?*c.struct_wl_surface, output: ?*c.struct_wl_output) callconv(.c) void {
     _ = surface;
-    const app: *c.struct_wsk_app = @ptrCast(@alignCast(data.?));
+    const app: *App = @ptrCast(@alignCast(data.?));
     const wayland = &app.wayland;
     var wsk_output = wayland.outputs;
     while (wsk_output) |candidate| {
@@ -40,9 +57,18 @@ fn surfaceLeave(data: ?*anyopaque, surface: ?*c.struct_wl_surface, output: ?*c.s
     _ = output;
 }
 
+const surface_listener: c.struct_wl_surface_listener = .{
+    .enter = surfaceEnter,
+    .leave = surfaceLeave,
+};
+
+// ---------------------------------------------------------------------------
+// Keyboard callbacks
+// ---------------------------------------------------------------------------
+
 fn keyboardKeymap(data: ?*anyopaque, keyboard: ?*c.struct_wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
     _ = keyboard;
-    const app: *c.struct_wsk_app = @ptrCast(@alignCast(data.?));
+    const app: *App = @ptrCast(@alignCast(data.?));
     c.wsk_input_set_keymap_from_fd(&app.input, format, fd, size);
 }
 
@@ -87,9 +113,22 @@ fn keyboardRepeatInfo(data: ?*anyopaque, keyboard: ?*c.struct_wl_keyboard, rate:
     _ = delay;
 }
 
+const keyboard_listener: c.struct_wl_keyboard_listener = .{
+    .keymap = keyboardKeymap,
+    .enter = keyboardEnter,
+    .leave = keyboardLeave,
+    .key = keyboardKey,
+    .modifiers = keyboardModifiers,
+    .repeat_info = keyboardRepeatInfo,
+};
+
+// ---------------------------------------------------------------------------
+// Frame callback
+// ---------------------------------------------------------------------------
+
 fn frameDone(data: ?*anyopaque, callback: ?*c.struct_wl_callback, callback_data: u32) callconv(.c) void {
     _ = callback_data;
-    const app: *c.struct_wsk_app = @ptrCast(@alignCast(data.?));
+    const app: *App = @ptrCast(@alignCast(data.?));
     const wayland = &app.wayland;
 
     c.wl_callback_destroy(callback);
@@ -102,15 +141,21 @@ fn frameDone(data: ?*anyopaque, callback: ?*c.struct_wl_callback, callback_data:
     }
 }
 
+export const frame_listener: c.struct_wl_callback_listener = .{
+    .done = frameDone,
+};
+
+// ---------------------------------------------------------------------------
+// Seat callbacks
+// ---------------------------------------------------------------------------
+
 fn seatCapabilities(data: ?*anyopaque, seat: ?*c.struct_wl_seat, capabilities: u32) callconv(.c) void {
-    const app: *c.struct_wsk_app = @ptrCast(@alignCast(data.?));
+    const app: *App = @ptrCast(@alignCast(data.?));
     const wayland = &app.wayland;
-    if (wayland.keyboard != null) {
-        return;
-    }
+    if (wayland.keyboard != null) return;
 
     if ((capabilities & c.WL_SEAT_CAPABILITY_KEYBOARD) == 0) {
-        _ = c.fprintf(c.stderr, "wl_seat does not support keyboard");
+        std.log.err("wl_seat does not support keyboard", .{});
         app.run = false;
         return;
     }
@@ -122,12 +167,21 @@ fn seatCapabilities(data: ?*anyopaque, seat: ?*c.struct_wl_seat, capabilities: u
 fn seatName(data: ?*anyopaque, seat: ?*c.struct_wl_seat, name: [*c]const u8) callconv(.c) void {
     _ = seat;
     _ = name;
-    const app: *c.struct_wsk_app = @ptrCast(@alignCast(data.?));
+    const app: *App = @ptrCast(@alignCast(data.?));
     if (c.libinput_udev_assign_seat(app.input.libinput, "seat0") != 0) {
-        _ = c.fprintf(c.stderr, "Failed to assign libinput seat\n");
+        std.log.err("Failed to assign libinput seat", .{});
         app.run = false;
     }
 }
+
+const seat_listener: c.struct_wl_seat_listener = .{
+    .capabilities = seatCapabilities,
+    .name = seatName,
+};
+
+// ---------------------------------------------------------------------------
+// Output callbacks
+// ---------------------------------------------------------------------------
 
 fn outputGeometry(data: ?*anyopaque, output: ?*c.struct_wl_output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: i32, make: [*c]const u8, model: [*c]const u8, transform: i32) callconv(.c) void {
     _ = output;
@@ -138,7 +192,7 @@ fn outputGeometry(data: ?*anyopaque, output: ?*c.struct_wl_output, x: i32, y: i3
     _ = make;
     _ = model;
     _ = transform;
-    const wsk_output: *c.struct_wsk_output = @ptrCast(@alignCast(data.?));
+    const wsk_output: *WskOutput = @ptrCast(@alignCast(data.?));
     wsk_output.subpixel = @intCast(subpixel);
 }
 
@@ -158,34 +212,52 @@ fn outputDone(data: ?*anyopaque, output: ?*c.struct_wl_output) callconv(.c) void
 
 fn outputScale(data: ?*anyopaque, output: ?*c.struct_wl_output, factor: i32) callconv(.c) void {
     _ = output;
-    const wsk_output: *c.struct_wsk_output = @ptrCast(@alignCast(data.?));
+    const wsk_output: *WskOutput = @ptrCast(@alignCast(data.?));
     wsk_output.scale = factor;
 }
+
+const output_listener: c.struct_wl_output_listener = .{
+    .geometry = outputGeometry,
+    .mode = outputMode,
+    .done = outputDone,
+    .scale = outputScale,
+};
+
+// ---------------------------------------------------------------------------
+// Registry callbacks
+// ---------------------------------------------------------------------------
 
 fn bindGlobal(comptime T: type, registry: ?*c.struct_wl_registry, name: u32, interface: [*c]const c.struct_wl_interface, version: u32) ?*T {
     return @ptrCast(@alignCast(c.wl_registry_bind(registry, name, interface, version)));
 }
 
+/// Compare two C strings for equality using Zig slice comparison.
+fn cStrEq(a: [*c]const u8, b: [*c]const u8) bool {
+    return std.mem.eql(u8, std.mem.sliceTo(a, 0), std.mem.sliceTo(b, 0));
+}
+
 fn registryGlobal(data: ?*anyopaque, registry: ?*c.struct_wl_registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
     _ = version;
-    const app: *c.struct_wsk_app = @ptrCast(@alignCast(data.?));
+    const app: *App = @ptrCast(@alignCast(data.?));
     const wayland = &app.wayland;
-    if (c.strcmp(interface, c.wl_compositor_interface.name) == 0) {
+
+    if (cStrEq(interface, c.wl_compositor_interface.name)) {
         wayland.compositor = bindGlobal(c.struct_wl_compositor, registry, name, &c.wl_compositor_interface, 4);
-    } else if (c.strcmp(interface, c.wl_shm_interface.name) == 0) {
+    } else if (cStrEq(interface, c.wl_shm_interface.name)) {
         wayland.shm = bindGlobal(c.struct_wl_shm, registry, name, &c.wl_shm_interface, 1);
-    } else if (c.strcmp(interface, c.wl_seat_interface.name) == 0) {
+    } else if (cStrEq(interface, c.wl_seat_interface.name)) {
         wayland.seat = bindGlobal(c.struct_wl_seat, registry, name, &c.wl_seat_interface, 5);
-    } else if (c.strcmp(interface, c.zxdg_output_manager_v1_interface.name) == 0) {
+    } else if (cStrEq(interface, c.zxdg_output_manager_v1_interface.name)) {
         wayland.output_mgr = bindGlobal(c.struct_zxdg_output_manager_v1, registry, name, &c.zxdg_output_manager_v1_interface, 1);
-    } else if (c.strcmp(interface, c.zwlr_layer_shell_v1_interface.name) == 0) {
+    } else if (cStrEq(interface, c.zwlr_layer_shell_v1_interface.name)) {
         wayland.layer_shell = bindGlobal(c.struct_zwlr_layer_shell_v1, registry, name, &c.zwlr_layer_shell_v1_interface, 1);
-    } else if (c.strcmp(interface, c.wl_output_interface.name) == 0) {
-        const allocation = c.calloc(1, @sizeOf(c.struct_wsk_output));
+    } else if (cStrEq(interface, c.wl_output_interface.name)) {
+        const allocation = c.calloc(1, @sizeOf(WskOutput));
         std.debug.assert(allocation != null);
-        const output: *c.struct_wsk_output = @ptrCast(@alignCast(allocation.?));
+        const output: *WskOutput = @ptrCast(@alignCast(allocation.?));
         output.output = bindGlobal(c.struct_wl_output, registry, name, &c.wl_output_interface, 3);
         output.scale = 1;
+
         if (wayland.outputs) |first| {
             var tail = first;
             while (tail[0].next) |next| {
@@ -205,47 +277,17 @@ fn registryGlobalRemove(data: ?*anyopaque, registry: ?*c.struct_wl_registry, nam
     _ = name;
 }
 
-const layer_surface_listener: c.struct_zwlr_layer_surface_v1_listener = .{
-    .configure = layerSurfaceConfigure,
-    .closed = layerSurfaceClosed,
-};
-
-const surface_listener: c.struct_wl_surface_listener = .{
-    .enter = surfaceEnter,
-    .leave = surfaceLeave,
-};
-
-export const frame_listener: c.struct_wl_callback_listener = .{
-    .done = frameDone,
-};
-
-const keyboard_listener: c.struct_wl_keyboard_listener = .{
-    .keymap = keyboardKeymap,
-    .enter = keyboardEnter,
-    .leave = keyboardLeave,
-    .key = keyboardKey,
-    .modifiers = keyboardModifiers,
-    .repeat_info = keyboardRepeatInfo,
-};
-
-const seat_listener: c.struct_wl_seat_listener = .{
-    .capabilities = seatCapabilities,
-    .name = seatName,
-};
-
-const output_listener: c.struct_wl_output_listener = .{
-    .geometry = outputGeometry,
-    .mode = outputMode,
-    .done = outputDone,
-    .scale = outputScale,
-};
-
 const registry_listener: c.struct_wl_registry_listener = .{
     .global = registryGlobal,
     .global_remove = registryGlobalRemove,
 };
 
-export fn wsk_wayland_destroy_layer_surface(wayland: *c.struct_wsk_wayland) void {
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Destroy the layer surface and its associated resources.
+export fn wsk_wayland_destroy_layer_surface(wayland: *Wayland) void {
     if (wayland.frame_callback) |callback| {
         c.wl_callback_destroy(callback);
         wayland.frame_callback = null;
@@ -266,16 +308,13 @@ export fn wsk_wayland_destroy_layer_surface(wayland: *c.struct_wsk_wayland) void
     wayland.layer_pending_configure = false;
 }
 
-export fn wsk_wayland_create_layer_surface(app: *c.struct_wsk_app) bool {
+/// Create the layer surface and register listeners.
+fn createLayerSurface(app: *App) bool {
     const wayland = &app.wayland;
-    if (wayland.surface != null) {
-        return true;
-    }
+    if (wayland.surface != null) return true;
 
     wayland.surface = c.wl_compositor_create_surface(wayland.compositor);
-    if (wayland.surface == null) {
-        return false;
-    }
+    if (wayland.surface == null) return false;
     _ = c.wl_surface_add_listener(wayland.surface, &surface_listener, app);
 
     wayland.layer_surface = c.zwlr_layer_shell_v1_get_layer_surface(
@@ -298,14 +337,11 @@ export fn wsk_wayland_create_layer_surface(app: *c.struct_wsk_app) bool {
     return true;
 }
 
-export fn wsk_wayland_request_layer_configure(app: *c.struct_wsk_app) void {
+/// Request a configure round-trip for the layer surface.
+fn requestLayerConfigure(app: *App) void {
     const wayland = &app.wayland;
-    if (wayland.layer_pending_configure or app.keys.head == null) {
-        return;
-    }
-    if (!wsk_wayland_create_layer_surface(app)) {
-        return;
-    }
+    if (wayland.layer_pending_configure or app.keys.head == null) return;
+    if (!createLayerSurface(app)) return;
 
     c.zwlr_layer_surface_v1_set_size(wayland.layer_surface, 1, 1);
     c.zwlr_layer_surface_v1_set_anchor(wayland.layer_surface, app.config.anchor);
@@ -321,12 +357,14 @@ export fn wsk_wayland_request_layer_configure(app: *c.struct_wsk_app) void {
     wayland.layer_pending_configure = true;
 }
 
-export fn wsk_wayland_set_dirty(app: *c.struct_wsk_app) void {
+/// Mark the app as dirty and schedule a re-render.
+/// If the layer surface is not yet configured, requests a configure first.
+export fn wsk_wayland_set_dirty(app: *App) void {
     const wayland = &app.wayland;
     if (wayland.frame_scheduled or wayland.layer_pending_configure or !wayland.layer_configured) {
         wayland.dirty = true;
         if (!wayland.layer_configured) {
-            wsk_wayland_request_layer_configure(app);
+            requestLayerConfigure(app);
         }
     } else if (wayland.surface != null) {
         wayland.dirty = false;
@@ -334,12 +372,14 @@ export fn wsk_wayland_set_dirty(app: *c.struct_wsk_app) void {
     }
 }
 
-export fn wsk_wayland_init(wayland: *c.struct_wsk_wayland, app: *c.struct_wsk_app) bool {
-    wayland.* = std.mem.zeroes(c.struct_wsk_wayland);
+/// Initialize the Wayland connection, bind global interfaces, and
+/// register the seat listener. Returns true on success.
+export fn wsk_wayland_init(wayland: *Wayland, app: *App) bool {
+    wayland.* = .{};
 
     wayland.display = c.wl_display_connect(null);
     if (wayland.display == null) {
-        _ = c.fprintf(c.stderr, "wl_display_connect: %s\n", c.strerror(std.c._errno().*));
+        std.log.err("wl_display_connect: {s}", .{c.strerror(c.__errno_location().*)});
         return false;
     }
 
@@ -358,8 +398,9 @@ export fn wsk_wayland_init(wayland: *c.struct_wsk_wayland, app: *c.struct_wsk_ap
         "wlr_layer_shell"
     else
         null;
+
     if (missing) |name| {
-        _ = c.fprintf(c.stderr, "Error: required Wayland interface '%s' is not present\n", name);
+        std.log.err("Error: required Wayland interface '{s}' is not present", .{name});
         return false;
     }
 
@@ -368,7 +409,8 @@ export fn wsk_wayland_init(wayland: *c.struct_wsk_wayland, app: *c.struct_wsk_ap
     return true;
 }
 
-export fn wsk_wayland_finish(wayland: *c.struct_wsk_wayland) void {
+/// Release all Wayland resources.
+export fn wsk_wayland_finish(wayland: *Wayland) void {
     wsk_wayland_destroy_layer_surface(wayland);
     var output = wayland.outputs;
     while (output) |current| {
@@ -384,19 +426,20 @@ export fn wsk_wayland_finish(wayland: *c.struct_wsk_wayland) void {
     }
 }
 
-export fn wsk_wayland_get_fd(wayland: *c.struct_wsk_wayland) c_int {
+/// Get the Wayland display file descriptor for polling.
+export fn wsk_wayland_get_fd(wayland: *Wayland) c_int {
     return c.wl_display_get_fd(wayland.display);
 }
 
-export fn wsk_wayland_dispatch(wayland: *c.struct_wsk_wayland, app: *c.struct_wsk_app) c_int {
+/// Dispatch pending Wayland events.
+export fn wsk_wayland_dispatch(wayland: *Wayland, app: *App) c_int {
     _ = app;
     return c.wl_display_dispatch(wayland.display);
 }
 
-export fn wsk_wayland_flush(wayland: *c.struct_wsk_wayland) c_int {
+/// Flush pending Wayland requests. Returns 0 on success, -1 on error.
+export fn wsk_wayland_flush(wayland: *Wayland) c_int {
     const ret = c.wl_display_flush(wayland.display);
-    if (ret == -1 and std.c._errno().* != c.EAGAIN) {
-        return -1;
-    }
+    if (ret == -1 and c.__errno_location().* != c.EAGAIN) return -1;
     return 0;
 }
