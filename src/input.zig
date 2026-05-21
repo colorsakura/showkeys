@@ -122,7 +122,11 @@ fn handleKeyboardKeyEvent(app: *App, kbevent: ?*c.struct_libinput_event_keyboard
 
     var now: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
-    c.wsk_keys_append(&app.keys, keypress, app.config.max_keys, &now);
+    const key_list: *keys.KeyList = @ptrCast(&app.keys);
+    key_list.append(@ptrCast(keypress), @intCast(app.config.max_keys), .{
+        .tv_sec = now.tv_sec,
+        .tv_nsec = now.tv_nsec,
+    });
     dirty.* = true;
 }
 
@@ -138,7 +142,11 @@ fn appendPointerEvent(app: *App, name: []const u8, dirty: *bool) void {
 
     var now: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
-    c.wsk_keys_append(&app.keys, keypress, app.config.max_keys, &now);
+    const key_list: *keys.KeyList = @ptrCast(&app.keys);
+    key_list.append(@ptrCast(keypress), @intCast(app.config.max_keys), .{
+        .tv_sec = now.tv_sec,
+        .tv_nsec = now.tv_nsec,
+    });
     dirty.* = true;
 }
 

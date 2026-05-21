@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const keys = @import("keys.zig");
+const config = @import("config.zig");
 
 // ---------------------------------------------------------------------------
 // Type aliases
@@ -36,9 +37,12 @@ export fn wsk_app_init_privileged(app_ptr: *?*App) bool {
 
 /// Initialise the app: parse config, load theme, set up input and Wayland.
 export fn wsk_app_init(app: *App, argc: c_int, argv: [*c][*c]u8) bool {
-    c.wsk_config_init_defaults(&app.config);
-    if (!c.wsk_config_parse(&app.config, argc, argv)) return false;
-    if (app.config.exit_after_parse) return true;
+    // The Config extern struct shares layout with c.struct_wsk_config, so
+    // the pointer cast is safe — no field conversion needed.
+    const cfg: *config.Config = @ptrCast(&app.config);
+    config.initDefaults(cfg);
+    if (!config.parse(cfg, argc, argv)) return false;
+    if (cfg.exit_after_parse) return true;
 
     _ = c.wsk_theme_init(&app.theme, app.config.key_svg_path);
 
@@ -107,8 +111,12 @@ export fn wsk_app_run(app: *App) c_int {
 
         var now: c.struct_timespec = undefined;
         _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now);
-        if (c.wsk_keys_expired(&app.keys, app.config.timeout, now)) {
-            c.wsk_keys_clear(&app.keys);
+        const key_list: *keys.KeyList = @ptrCast(&app.keys);
+        if (key_list.expired(@intCast(app.config.timeout), .{
+            .tv_sec = now.tv_sec,
+            .tv_nsec = now.tv_nsec,
+        })) {
+            key_list.clear();
             c.wsk_wayland_set_dirty(app);
         }
     }
@@ -119,7 +127,8 @@ export fn wsk_app_run(app: *App) c_int {
 export fn wsk_app_finish(app: ?*App) void {
     const state = app orelse return;
 
-    c.wsk_keys_clear(&state.keys);
+    const key_list: *keys.KeyList = @ptrCast(&state.keys);
+    key_list.clear();
     c.wsk_theme_finish(&state.theme);
     c.wsk_input_finish(&state.input);
     c.wsk_wayland_finish(&state.wayland);

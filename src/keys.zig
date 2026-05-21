@@ -1,5 +1,4 @@
 const std = @import("std");
-const c = @import("c");
 
 /// Memory pool for keypress allocations — much faster than a general-purpose
 /// allocator since every allocation is the same type.
@@ -112,38 +111,4 @@ fn reachedDeadline(now: TimeSpec, deadline: TimeSpec) bool {
     if (now.tv_sec > deadline.tv_sec) return true;
     if (now.tv_sec < deadline.tv_sec) return false;
     return now.tv_nsec >= deadline.tv_nsec;
-}
-
-// ---------------------------------------------------------------------------
-// Transitional C ABI bridges (used from app.zig and input.zig via `c.*`)
-// Will be removed when callers migrate to the Zig API.
-// ---------------------------------------------------------------------------
-
-/// Bridge: copy a C timespec into a Zig TimeSpec then call `append()`.
-/// `max_keys` is i32 to match the C struct `wsk_config.max_keys` layout.
-export fn wsk_keys_append(
-    keys: *KeyList,
-    keypress: *Keypress,
-    max_keys: i32,
-    now: *c.struct_timespec,
-) void {
-    keys.append(keypress, @intCast(max_keys), .{
-        .tv_sec = now.*.tv_sec,
-        .tv_nsec = now.*.tv_nsec,
-    });
-}
-
-export fn wsk_keys_clear(keys: *KeyList) void {
-    keys.clear();
-}
-
-export fn wsk_keys_expired(
-    keys: *const KeyList,
-    timeout: i32,
-    now: c.struct_timespec,
-) bool {
-    return keys.expired(@intCast(timeout), .{
-        .tv_sec = now.tv_sec,
-        .tv_nsec = now.tv_nsec,
-    });
 }

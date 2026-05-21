@@ -1,4 +1,5 @@
 const std = @import("std");
+const c = @import("c");
 const color = @import("color.zig");
 
 // Anchor bit values matching zwlr_layer_surface_v1 anchor enum
@@ -26,18 +27,22 @@ pub const Anchor = packed struct {
     }
 };
 
-pub const Config = struct {
+/// Config is the single source of truth — an `extern struct` whose layout
+/// matches `struct wsk_config` in `include/config.h`.  Every module accesses
+/// the same fields via `c.struct_wsk_config` (translate‑c) which shares the
+/// same ABI, so no conversion layer is needed.
+pub const Config = extern struct {
     foreground: u32 = 0xFFFFFFFF,
     background: u32 = 0x00000000,
     specialfg: u32 = 0xAAAAAAFF,
-    font: []const u8 = "monospace 24",
-    timeout: u32 = 1,
-    max_keys: u32 = 5,
-    key_svg_path: ?[]const u8 = null,
-    anchor: Anchor = .{ .bottom = true, .right = true },
-    margin: u32 = 32,
+    font: ?[*:0]const u8 = "monospace 24",
+    timeout: i32 = 1,
+    max_keys: i32 = 5,
+    key_svg_path: ?[*:0]const u8 = null,
+    anchor: u32 = @as(u32, @bitCast(Anchor{ .bottom = true, .right = true })),
+    margin: i32 = 32,
     exit_after_parse: bool = false,
-    exit_code: u32 = 0,
+    exit_code: i32 = 0,
 };
 
 const usage =
@@ -45,6 +50,11 @@ const usage =
     "[-t timeout] [-n max-keys]\n\t" ++
     "[-a top|left|right|bottom] [-m margin] " ++
     "[-o output] [-k key.svg]\n";
+
+/// Reset `config` to default values.
+pub fn initDefaults(config: *Config) void {
+    config.* = .{};
+}
 
 pub fn printUsage() void {
     std.log.info("{s}", .{usage});
@@ -65,195 +75,16 @@ pub fn parseAnchor(text: []const u8) ?Anchor {
     return null;
 }
 
-pub const ParseError = error{
-    UnknownOption,
-    UnknownArgument,
-    InvalidArgument,
-    HelpRequested,
-};
-
-/// Parse command-line arguments into a Config.
-/// `args` should be the full argument list including argv[0] (the program name).
-pub fn parse(args: [][]const u8) ParseError!Config {
-    var self = Config{};
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        if (arg.len < 2 or arg[0] != '-') {
-            printUsage();
-            return error.UnknownArgument;
-        }
-        switch (arg[1]) {
-            'b' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-b requires a color argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.background = color.parse(args[i], 0xFFFFFFFF);
-            },
-            'f' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-f requires a color argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.foreground = color.parse(args[i], 0xFFFFFFFF);
-            },
-            's' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-s requires a color argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.specialfg = color.parse(args[i], 0xFFFFFFFF);
-            },
-            'F' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-F requires a font argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.font = args[i];
-            },
-            't' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-t requires a timeout argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.timeout = std.fmt.parseInt(u32, args[i], 10) catch {
-                    std.log.err("Invalid timeout '{s}'", .{args[i]});
-                    return error.InvalidArgument;
-                };
-            },
-            'n' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-n requires a number argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.max_keys = std.fmt.parseInt(u32, args[i], 10) catch {
-                    std.log.err("Invalid max key count '{s}'", .{args[i]});
-                    return error.InvalidArgument;
-                };
-                if (self.max_keys < 1) {
-                    std.log.err("Invalid max key count '{s}'", .{args[i]});
-                    return error.InvalidArgument;
-                }
-            },
-            'a' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-a requires an anchor argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.anchor = parseAnchor(args[i]) orelse {
-                    std.log.err("Invalid anchor value '{s}'", .{args[i]});
-                    return error.InvalidArgument;
-                };
-            },
-            'm' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-m requires a margin argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.margin = std.fmt.parseInt(u32, args[i], 10) catch {
-                    std.log.err("Invalid margin '{s}'", .{args[i]});
-                    return error.InvalidArgument;
-                };
-            },
-            'o' => {
-                std.log.err("-o is unimplemented", .{});
-                self.exit_after_parse = true;
-                self.exit_code = 0;
-                return self;
-            },
-            'k' => {
-                i += 1;
-                if (i >= args.len) {
-                    std.log.err("-k requires a path argument", .{});
-                    printUsage();
-                    return error.InvalidArgument;
-                }
-                self.key_svg_path = args[i];
-            },
-            'h' => {
-                printUsage();
-                return error.HelpRequested;
-            },
-            else => {
-                std.log.err("Unknown option '-{c}'", .{arg[1]});
-                printUsage();
-                return error.UnknownOption;
-            },
-        }
-    }
-    return self;
-}
-
-// ---------------------------------------------------------------------------
-// Backward-compatible C ABI bridge — used by app.zig and keycap.zig until
-// they are migrated to the native Zig API.
-// ---------------------------------------------------------------------------
-
-/// Layout must match `struct wsk_config` in `include/config.h`.
-/// `const char *` fields translate to `?[*:0]const u8`.
-const CConfig = extern struct {
-    foreground: u32,
-    background: u32,
-    specialfg: u32,
-    font: ?[*:0]const u8,
-    timeout: i32,
-    max_keys: i32,
-    key_svg_path: ?[*:0]const u8,
-    anchor: u32,
-    margin: i32,
-    exit_after_parse: bool,
-    exit_code: i32,
-};
-
-export fn wsk_config_init_defaults(config: *CConfig) void {
-    const def = Config{};
-    config.foreground = def.foreground;
-    config.background = def.background;
-    config.specialfg = def.specialfg;
-    config.font = @as(?[*:0]const u8, @ptrCast(def.font.ptr));
-    config.timeout = @intCast(def.timeout);
-    config.max_keys = @intCast(def.max_keys);
-    config.key_svg_path = null;
-    config.anchor = def.anchor.toU32();
-    config.margin = @intCast(def.margin);
-    config.exit_after_parse = def.exit_after_parse;
-    config.exit_code = @intCast(def.exit_code);
-}
-
-export fn wsk_config_print_usage(stream: ?*anyopaque) void {
-    _ = stream;
-    std.log.info("{s}", .{usage});
-}
-
-export fn wsk_config_parse(
-    config: *CConfig,
-    argc: i32,
-    argv: [*c][*c]u8,
-) bool {
-    // Parse C-style args directly (the [*c] type layout is incompatible with
-    // [][]const u8, so we cannot call the Zig parse() here).
+/// Parse command-line arguments (C‑style argc/argv) into the config.
+/// Returns `true` on success, `false` on error (error message already logged).
+/// `-h` prints usage and returns `false`; `-o` sets `exit_after_parse` and
+/// returns `true`.
+pub fn parse(config: *Config, argc: i32, argv: [*c][*c]u8) bool {
     var i: i32 = 1;
     while (i < argc) : (i += 1) {
         const arg = std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0);
         if (arg.len < 2 or arg[0] != '-') {
-            wsk_config_print_usage(null);
+            printUsage();
             return false;
         }
         switch (arg[1]) {
@@ -327,11 +158,11 @@ export fn wsk_config_parse(
                 config.key_svg_path = @ptrCast(argv[@as(usize, @intCast(i))]);
             },
             'h' => {
-                wsk_config_print_usage(null);
+                printUsage();
                 return false;
             },
             else => {
-                wsk_config_print_usage(null);
+                printUsage();
                 return false;
             },
         }
