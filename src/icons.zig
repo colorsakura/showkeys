@@ -167,7 +167,6 @@ pub fn cacheGet(
         icon_cache.put(name, null) catch {};
         return null;
     }
-    defer c.free(path);
 
     var error_ptr: ?*c.GError = null;
     const svg = c.rsvg_handle_new_from_file(path, &error_ptr);

@@ -3,8 +3,18 @@ const c = @import("c");
 const icons = @import("icons.zig");
 
 /// Alias for the C wsk_theme struct, maintaining ABI compatibility.
-/// Used by exported functions for seamless interop with app.zig via `c.*` calls.
 const Theme = c.struct_wsk_theme;
+
+/// Arena for path string allocations.  Freed when `finish()` is called.
+var path_arena: std.heap.ArenaAllocator = undefined;
+var path_arena_initialized = false;
+
+fn ensurePathArena() void {
+    if (!path_arena_initialized) {
+        path_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        path_arena_initialized = true;
+    }
+}
 
 /// Initialize theme state by loading the key SVG and setting up
 /// the icon cache base directory.
@@ -35,26 +45,25 @@ pub fn init(theme: *Theme, key_svg_path: [*c]const u8) bool {
     return true;
 }
 
-/// Release theme resources: icon cache, base directory string,
-/// and the key SVG handle.
+/// Release theme resources: icon cache, path arena, and the key SVG handle.
 pub fn finish(theme: *Theme) void {
     icons.cacheFinish(&theme.icons);
-    c.free(theme.base_dir);
+    if (path_arena_initialized) {
+        path_arena.deinit();
+        path_arena_initialized = false;
+    }
     if (theme.key_svg) |svg| {
         c.g_object_unref(svg);
     }
 }
 
-/// Duplicate a C string into a new heap-allocated C string.
-/// The caller is responsible for freeing the result with `c.free`.
+/// Duplicate a C string into a new C string from the path arena.
 pub fn xstrdup(str: [*c]const u8) [*c]u8 {
     const bytes = std.mem.sliceTo(str, 0);
     return allocCopyZ(bytes);
 }
 
-/// Extract the directory portion of a path.
-/// Returns a newly allocated C string (caller must free with `c.free`).
-/// Returns null on allocation failure.
+/// Extract the directory portion of a path from the path arena.
 fn pathDirname(path: [*c]const u8) [*c]u8 {
     const bytes = std.mem.sliceTo(path, 0);
     const slash_index = std.mem.lastIndexOfScalar(u8, bytes, '/') orelse return allocCopyZ(".");
@@ -64,9 +73,7 @@ fn pathDirname(path: [*c]const u8) [*c]u8 {
     return allocCopyZ(bytes[0..slash_index]);
 }
 
-/// Join three path components with separators.
-/// Returns a newly allocated C string (caller must free with `c.free`).
-/// Returns null on allocation failure.
+/// Join three path components with separators from the path arena.
 pub fn joinPath3(
     dir: [*c]const u8,
     subdir: [*c]const u8,
@@ -80,8 +87,9 @@ pub fn joinPath3(
     const sep2: []const u8 = if (subdir_bytes.len > 0 and subdir_bytes[subdir_bytes.len - 1] == '/') "" else "/";
 
     const total_len = dir_bytes.len + sep1.len + subdir_bytes.len + sep2.len + file_bytes.len + 1;
-    const buf = c.malloc(total_len) orelse return null;
-    const buf_slice = @as([*]u8, @ptrCast(buf))[0..total_len];
+    ensurePathArena();
+    const allocator = path_arena.allocator();
+    const buf_slice = allocator.alloc(u8, total_len) catch return null;
     var offset: usize = 0;
 
     @memcpy(buf_slice[offset..][0..dir_bytes.len], dir_bytes);
@@ -96,12 +104,10 @@ pub fn joinPath3(
     offset += file_bytes.len;
 
     buf_slice[offset] = 0;
-    return @ptrCast(buf);
+    return @ptrCast(buf_slice.ptr);
 }
 
 /// Render an SVG document into a Cairo context within the given bounding rectangle.
-/// Logs errors via `std.log.err` on failure.
-/// Returns true on success, false on failure.
 pub fn svgDrawToRect(
     cr: ?*c.cairo_t,
     svg: ?*c.RsvgHandle,
@@ -133,14 +139,12 @@ pub fn svgDrawToRect(
     return true;
 }
 
-/// Allocate a null-terminated copy of the given byte slice.
-/// The caller is responsible for freeing the result with `c.free`.
-/// Returns null on allocation failure.
+/// Allocate a null-terminated copy of the given byte slice from the path arena.
 fn allocCopyZ(bytes: []const u8) [*c]u8 {
-    const len = bytes.len + 1;
-    const buf = c.malloc(len) orelse return null;
-    const dest = @as([*]u8, @ptrCast(buf));
-    @memcpy(dest[0..bytes.len], bytes);
-    dest[bytes.len] = 0;
-    return dest;
+    ensurePathArena();
+    const allocator = path_arena.allocator();
+    const buf = allocator.alloc(u8, bytes.len + 1) catch return null;
+    @memcpy(buf[0..bytes.len], bytes);
+    buf[bytes.len] = 0;
+    return @ptrCast(buf.ptr);
 }

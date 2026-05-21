@@ -24,15 +24,15 @@ fn errnoPtr() *c_int {
 
 /// Allocate the app struct and start the privileged device manager.
 pub fn initPrivileged(app_ptr: *?*App) bool {
-    const allocation = c.calloc(1, @sizeOf(App)) orelse {
+    const app = std.heap.page_allocator.create(App) catch {
         std.log.err("Failed to allocate app state", .{});
         return false;
     };
-    const app: *App = @ptrCast(@alignCast(allocation));
+    app.* = undefined;
     app_ptr.* = app;
 
     if (devmgr.start(&app.devmgr, &app.devmgr_pid, c.INPUTDEVPATH) > 0) {
-        c.free(app);
+        std.heap.page_allocator.destroy(app);
         app_ptr.* = null;
         return false;
     }
@@ -137,7 +137,7 @@ pub fn finish(app: ?*App) void {
     input.finish(&state.input);
     wl.finish(&state.wayland);
     devmgr.finish(state.devmgr, state.devmgr_pid);
-    c.free(state);
+    std.heap.page_allocator.destroy(state);
 
     // Release the keypress memory pool after all key lists are exhausted.
     keys.deinitModule();

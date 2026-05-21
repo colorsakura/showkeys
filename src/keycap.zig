@@ -5,6 +5,18 @@ const thm = @import("theme.zig");
 const pango = @import("pango.zig");
 const icons = @import("icons.zig");
 
+/// Arena for transient layout arrays.  Reset on every `measureKeycaps` call
+/// so the caller never needs to free individual layouts.
+var layout_arena: std.heap.ArenaAllocator = undefined;
+var layout_arena_initialized = false;
+
+fn ensureLayoutArena() void {
+    if (!layout_arena_initialized) {
+        layout_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        layout_arena_initialized = true;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Constants & types
 // ---------------------------------------------------------------------------
@@ -139,8 +151,11 @@ pub fn measureKeycaps(
     }
     if (key_count == 0) return 0;
 
-    const raw_layouts = c.calloc(key_count, @sizeOf(c.struct_keycap_layout)) orelse return 0;
-    const layouts: [*c]c.struct_keycap_layout = @ptrCast(@alignCast(raw_layouts));
+    ensureLayoutArena();
+    _ = layout_arena.reset(.retain_capacity);
+    const allocator = layout_arena.allocator();
+    const layouts_slice = allocator.alloc(c.struct_keycap_layout, key_count) catch return 0;
+    const layouts: [*c]c.struct_keycap_layout = @ptrCast(layouts_slice.ptr);
 
     const s = &keycap_style;
     const padding_x = s.padding_x * scale;
@@ -283,6 +298,5 @@ pub fn renderKeycapsToCairo(
     const key_count = measureKeycaps(cairo, keys, config, thm_param, scale, width, height, &layouts);
     if (layouts != null) {
         renderKeycaps(cairo, layouts, key_count, config, thm_param, scale, width.*, width.*);
-        c.free(layouts);
     }
 }

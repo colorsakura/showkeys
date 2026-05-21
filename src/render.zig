@@ -71,7 +71,6 @@ pub fn renderFrame(app: *c.struct_wsk_app) void {
     const surface_too_large = target_height != wl.height or wl.width > reserved_width or wl.width == 0;
 
     if (surface_too_small or surface_too_large) {
-        defer c.free(layouts);
         if (key_count == 0 or width == 0 or height == 0) {
             wl_mod.destroyLayerSurface(wl);
         } else {
@@ -82,7 +81,6 @@ pub fn renderFrame(app: *c.struct_wsk_app) void {
     }
 
     if (key_count == 0 or height == 0) {
-        c.free(layouts);
         return;
     }
 
@@ -94,7 +92,6 @@ pub fn renderFrame(app: *c.struct_wsk_app) void {
         wl.height * @as(u32, @intCast(scale)),
     );
     if (wl.current_buffer == null) {
-        c.free(layouts);
         return;
     }
     const cairo_ctx: ?*c.cairo_t = wl.current_buffer[0].cairo;
@@ -121,7 +118,6 @@ pub fn renderFrame(app: *c.struct_wsk_app) void {
         wl.width * @as(u32, @intCast(scale)),
         width,
     );
-    c.free(layouts);
 
     c.cairo_surface_flush(wl.current_buffer[0].surface);
 
