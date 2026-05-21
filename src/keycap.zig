@@ -62,6 +62,10 @@ const keycap_style_filled: KeycapStyle = .{
     .border = 0xFFFFFF33,
 };
 
+/// Default spacing between keycaps (in logical pixels at scale=1).
+/// Exposed so render.zig can correctly size the layer surface.
+pub const default_gap: c_int = 6;
+
 const tau: f64 = 6.283185307179586;
 const half_pi: f64 = 1.5707963267948966;
 

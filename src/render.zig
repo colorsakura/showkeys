@@ -118,9 +118,28 @@ pub fn renderFrame(app: *App) void {
         &layouts,
     );
 
-    const target_width = width / @as(u32, @intCast(scale));
+    const target_width = if (key_count > 0) width / @as(u32, @intCast(scale)) else 0;
     const target_height = height / @as(u32, @intCast(scale));
-    const reserved_width = target_width * @as(u32, @intCast(app.config.max_keys));
+
+    // ── Compute the reserved width for max_keys ──────────────────────────
+    // `width` from measureKeycaps includes inter-key gaps:
+    //   width = Σ(layout.widths) + (key_count - 1) * gap_scaled
+    //
+    // The old calculation `target_width * max_keys` is WRONG when
+    // key_count < max_keys because the gap term gets scaled incorrectly.
+    // Example: 1 key, total = 1*w + 0*g,  target_width = w,
+    //          reserved = w * 5 = 5w,  but 5 keys need 5w + 4g.
+    // Surface ends up 4*gap too small → last keycap(s) overflow!
+    //
+    // Fix: strip gaps, compute average key-body width, then rebuild
+    // the total for max_keys with the correct (max_keys-1) gap count.
+    const gap_scaled: u32 = @intCast(@as(c_int, @intCast(keycap.default_gap)) * scale);
+    const key_count_u32: u32 = @intCast(key_count);
+    const max_keys_u32: u32 = @intCast(@max(app.config.max_keys, 0));
+    const key_width_sum = if (key_count > 0) width - (key_count_u32 - 1) * gap_scaled else 0;
+    const avg_key_width = if (key_count > 0) key_width_sum / key_count_u32 else 0;
+    const reserved_scaled = avg_key_width * max_keys_u32 + (max_keys_u32 - 1) * gap_scaled;
+    const reserved_width = reserved_scaled / @as(u32, @intCast(scale));
     const surface_too_small = target_width > wl_state.width or target_height > wl_state.height;
     const surface_too_large = target_height != wl_state.height or wl_state.width > reserved_width or wl_state.width == 0;
 
