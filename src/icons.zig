@@ -2,11 +2,32 @@ const std = @import("std");
 const c = @import("c");
 
 // ---------------------------------------------------------------------------
-// Type aliases for C structs
+// Module-level icon cache (global — only one theme at a time)
 // ---------------------------------------------------------------------------
 
-const IconCache = c.struct_wsk_icon_cache;
-const IconCacheEntry = c.struct_wsk_icon_cache_entry;
+/// Maps icon basename (e.g. "escape.svg") to an `RsvgHandle`.
+/// A `null` value means the file was not found or failed to load; we cache
+/// failures so we don't retry on every frame.
+var icon_cache: std.StringHashMap(?*c.RsvgHandle) = undefined;
+var icon_cache_initialized = false;
+
+fn ensureCache() void {
+    if (!icon_cache_initialized) {
+        icon_cache = std.StringHashMap(?*c.RsvgHandle).init(std.heap.page_allocator);
+        icon_cache_initialized = true;
+    }
+}
+
+fn deinitCache() void {
+    if (icon_cache_initialized) {
+        var it = icon_cache.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.*) |svg| c.g_object_unref(svg);
+        }
+        icon_cache.deinit();
+        icon_cache_initialized = false;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Icon name mapping
@@ -122,97 +143,48 @@ export fn wsk_special_icon_name(key_name: [*c]const u8) [*c]const u8 {
 }
 
 /// Find or load an SVG icon for the given icon name.
-/// Returns the RsvgHandle, or null if the icon is not found.
+/// Uses a module-level `StringHashMap` instead of the C linked list
+/// stored in `c.struct_wsk_icon_cache` (the C struct field is unused).
+/// Returns the RsvgHandle, or null if the icon is not found or failed.
 export fn wsk_icon_cache_get(
-    cache: *IconCache,
+    cache: *c.struct_wsk_icon_cache,
     base_dir: [*c]const u8,
     icon_name: [*c]const u8,
 ) ?*c.RsvgHandle {
+    _ = cache;
     if (base_dir == null or icon_name == null) return null;
 
-    const icon_name_bytes = std.mem.sliceTo(icon_name, 0);
-    if (findIconCacheEntry(cache, icon_name_bytes)) |entry| {
-        return if (entry.failed) null else entry.svg;
-    }
+    ensureCache();
 
-    const entry = createIconCacheEntry(icon_name) orelse return null;
-    errdefer destroyIconCacheEntry(entry);
+    const name = std.mem.sliceTo(icon_name, 0);
 
+    // Check the Zig hash map first.
+    if (icon_cache.get(name)) |cached| return cached;
+
+    // Not cached — load the SVG file.
     const path = c.wsk_join_path3(base_dir, "icons", icon_name);
     if (path == null) {
-        entry.failed = true;
-    } else {
-        defer c.free(path);
-        entry.svg = loadSvg(path, &entry.failed);
+        icon_cache.put(name, null) catch {};
+        return null;
     }
+    defer c.free(path);
 
-    entry.next = cache.entries;
-    cache.entries = entry;
-    return if (entry.failed) null else entry.svg;
+    var error_ptr: ?*c.GError = null;
+    const svg = c.rsvg_handle_new_from_file(path, &error_ptr);
+    const result: ?*c.RsvgHandle = if (svg) |s|
+        s
+    else brk: {
+        if (error_ptr) |err| c.g_error_free(err);
+        break :brk null;
+    };
+
+    // Cache the result (null = failure, avoid retrying).
+    icon_cache.put(name, result) catch {};
+    return result;
 }
 
 /// Free all entries in the icon cache.
-export fn wsk_icon_cache_finish(cache: *IconCache) void {
-    var icon = cache.entries;
-    while (icon) |entry| {
-        const next = entry.*.next;
-        destroyIconCacheEntry(@ptrCast(entry));
-        icon = next;
-    }
-    cache.entries = null;
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Search the cache linked list for a matching icon name.
-fn findIconCacheEntry(cache: *const IconCache, icon_name: []const u8) ?*IconCacheEntry {
-    var current = cache.entries;
-    while (current) |entry| {
-        const cached_name = std.mem.sliceTo(entry.*.icon_name, 0);
-        if (std.mem.eql(u8, cached_name, icon_name)) {
-            return @ptrCast(entry);
-        }
-        current = entry.*.next;
-    }
-    return null;
-}
-
-/// Allocate and initialise a new cache entry. The icon_name is duplicated.
-fn createIconCacheEntry(icon_name: [*c]const u8) ?*IconCacheEntry {
-    const entry: *IconCacheEntry = @ptrCast(@alignCast(c.malloc(@sizeOf(IconCacheEntry)) orelse return null));
-    entry.* = .{
-        .icon_name = null,
-        .svg = null,
-        .failed = false,
-        .next = null,
-    };
-
-    entry.icon_name = c.wsk_xstrdup(icon_name);
-    if (entry.icon_name == null) {
-        c.free(entry);
-        return null;
-    }
-    return entry;
-}
-
-/// Release the resources held by a cache entry.
-fn destroyIconCacheEntry(entry: *IconCacheEntry) void {
-    if (entry.svg) |svg| c.g_object_unref(svg);
-    c.free(entry.icon_name);
-    c.free(entry);
-}
-
-/// Load an SVG file from the given path, returning the RsvgHandle.
-fn loadSvg(path: [*c]const u8, failed: *bool) ?*c.RsvgHandle {
-    var error_ptr: ?*c.GError = null;
-    const svg = c.rsvg_handle_new_from_file(path, &error_ptr);
-    if (svg == null) {
-        failed.* = true;
-        if (error_ptr) |err| c.g_error_free(err);
-        return null;
-    }
-    failed.* = false;
-    return svg;
+export fn wsk_icon_cache_finish(cache: *c.struct_wsk_icon_cache) void {
+    _ = cache;
+    deinitCache();
 }
