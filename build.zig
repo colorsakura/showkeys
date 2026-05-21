@@ -56,14 +56,12 @@ pub fn build(b: *std.Build) void {
 }
 
 fn configureCModule(b: *std.Build, module: *std.Build.Module, devpath: []const u8) void {
-    module.addIncludePath(b.path("include"));
     module.addCMacro("_POSIX_C_SOURCE", posix_c_source);
     module.addCMacro("INPUTDEVPATH", cStringLiteral(b, devpath));
     linkSystemLibraries(module);
 }
 
 fn configureTranslateC(b: *std.Build, translate_c: *std.Build.Step.TranslateC, devpath: []const u8, protocol_output_dir: std.Build.LazyPath) void {
-    translate_c.addIncludePath(b.path("include"));
     translate_c.addIncludePath(protocol_output_dir);
     translate_c.defineCMacro("_POSIX_C_SOURCE", posix_c_source);
     translate_c.defineCMacro("INPUTDEVPATH", cStringLiteral(b, devpath));
@@ -98,7 +96,6 @@ fn translateCBindings(
         \\#include <string.h>
         \\#include <errno.h>
         \\#include <fcntl.h>
-        \\#include <getopt.h>
         \\#include <limits.h>
         \\#include <sys/mman.h>
         \\#include <sys/socket.h>
@@ -112,11 +109,33 @@ fn translateCBindings(
         \\#include <linux/input-event-codes.h>
         \\#include <wayland-client.h>
         \\#include <xkbcommon/xkbcommon.h>
-        \\#include "config.h"
-        \\#include "keys.h"
         \\#include "xdg-output-unstable-v1-client-protocol.h"
         \\#include "wlr-layer-shell-unstable-v1-client-protocol.h"
-        \\uint32_t wsk_color_parse(const char *text, uint32_t fallback);
+        \\
+        \\/* ---- project struct definitions (C source files removed) ---- */
+        \\struct wsk_config {
+        \\    uint32_t foreground;
+        \\    uint32_t background;
+        \\    uint32_t specialfg;
+        \\    const char *font;
+        \\    int timeout;
+        \\    int max_keys;
+        \\    const char *key_svg_path;
+        \\    uint32_t anchor;
+        \\    int margin;
+        \\    bool exit_after_parse;
+        \\    int exit_code;
+        \\};
+        \\struct wsk_keypress {
+        \\    xkb_keysym_t sym;
+        \\    char name[128];
+        \\    char utf8[128];
+        \\    struct wsk_keypress *next;
+        \\};
+        \\struct wsk_key_list {
+        \\    struct wsk_keypress *head;
+        \\    struct timespec last_key;
+        \\};
         \\
         \\typedef unsigned int GQuark;
         \\typedef int gint;
@@ -264,50 +283,7 @@ fn translateCBindings(
         \\void pango_layout_get_pixel_size(PangoLayout *layout, int *width, int *height);
         \\int pango_layout_get_baseline(PangoLayout *layout);
         \\PangoContext *pango_layout_get_context(PangoLayout *layout);
-        \\PangoLayout *get_pango_layout(cairo_t *cairo, const char *font, const char *text, double scale);
-        \\void get_text_size(cairo_t *cairo, const char *font, int *width, int *height, int *baseline, double scale, const char *fmt, ...);
-        \\void pango_printf(cairo_t *cairo, const char *font, double scale, const char *fmt, ...);
-        \\void wsk_cairo_set_source_u32(cairo_t *cr, uint32_t color);
-        \\const char *wsk_special_icon_name(const char *key_name);
-        \\RsvgHandle *wsk_icon_cache_get(struct wsk_icon_cache *cache, const char *base_dir, const char *icon_name);
-        \\void wsk_icon_cache_finish(struct wsk_icon_cache *cache);
-        \\bool wsk_theme_init(struct wsk_theme *theme, const char *key_svg_path);
-        \\void wsk_theme_finish(struct wsk_theme *theme);
-        \\bool wsk_svg_draw_to_rect(cairo_t *cr, RsvgHandle *svg, double x, double y, double width, double height, const char *description);
-        \\struct pool_buffer *get_next_buffer(struct wl_shm *shm, struct pool_buffer pool[2], uint32_t width, uint32_t height);
-        \\void wsk_render_frame(struct wsk_app *app);
-        \\void wsk_wayland_destroy_layer_surface(struct wsk_wayland *wayland);
         \\extern const struct wl_callback_listener frame_listener;
-        \\size_t wsk_measure_keycaps(cairo_t *cairo, const struct wsk_keypress *keys, const struct wsk_config *config, struct wsk_theme *theme, int scale, uint32_t *width, uint32_t *height, struct keycap_layout **out_layouts);
-        \\void wsk_render_keycaps(cairo_t *cairo, struct keycap_layout *layouts, size_t key_count, const struct wsk_config *config, struct wsk_theme *theme, int scale, uint32_t surface_width, uint32_t content_width);
-        \\int devmgr_start(int *fd, pid_t *pid, const char *devpath);
-        \\int devmgr_open(int sockfd, const char *path);
-        \\void devmgr_finish(int sock, pid_t pid);
-        \\bool wsk_input_init(struct wsk_input *input, struct wsk_app *app);
-        \\void wsk_input_finish(struct wsk_input *input);
-        \\int wsk_input_get_fd(struct wsk_input *input);
-        \\void wsk_input_handle_libinput_event(struct wsk_app *app, struct libinput_event *event, bool *dirty);
-        \\void wsk_input_set_keymap(struct wsk_input *input, struct xkb_keymap *keymap, struct xkb_state *xkb_state);
-        \\void wsk_input_set_keymap_from_fd(struct wsk_input *input, uint32_t format, int32_t fd, uint32_t size);
-        \\bool wsk_wayland_init(struct wsk_wayland *wayland, struct wsk_app *app);
-        \\void wsk_wayland_finish(struct wsk_wayland *wayland);
-        \\int wsk_wayland_get_fd(struct wsk_wayland *wayland);
-        \\int wsk_wayland_dispatch(struct wsk_wayland *wayland, struct wsk_app *app);
-        \\int wsk_wayland_flush(struct wsk_wayland *wayland);
-        \\void wsk_wayland_set_dirty(struct wsk_app *app);
-        \\int libinput_dispatch(struct libinput *libinput);
-        \\struct libinput_event *libinput_get_event(struct libinput *libinput);
-        \\void libinput_event_destroy(struct libinput_event *event);
-        \\char *wsk_xstrdup(const char *str);
-        \\char *wsk_path_dirname(const char *path);
-        \\char *wsk_join_path3(const char *dir, const char *subdir, const char *file);
-        \\
-        \\struct wsk_app;
-        \\bool wsk_app_init_privileged(struct wsk_app **app_ptr);
-        \\bool wsk_app_init(struct wsk_app *app, int argc, char *argv[]);
-        \\int wsk_app_run(struct wsk_app *app);
-        \\void wsk_app_finish(struct wsk_app *app);
-        \\
     );
 
     const translate_c = b.addTranslateC(.{
