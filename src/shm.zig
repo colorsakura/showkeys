@@ -123,7 +123,7 @@ fn createBuffer(
 /// Destroys a pool buffer, releasing all associated resources:
 /// Wayland buffer, Cairo surface/context, Pango context, and the mmap region.
 /// The buffer struct is zeroed after cleanup.
-export fn destroy_buffer(buffer: *PoolBuffer) void {
+pub fn destroyBuffer(buffer: *PoolBuffer) void {
     if (buffer.buffer) |b| c.wl_buffer_destroy(b);
     if (buffer.cairo) |cr| c.cairo_destroy(cr);
     if (buffer.surface) |s| c.cairo_surface_destroy(s);
@@ -141,7 +141,7 @@ export fn destroy_buffer(buffer: *PoolBuffer) void {
 /// Returns the next available (non-busy) buffer from the pool of two.
 /// If the existing buffer has different dimensions, it is destroyed and
 /// recreated. Returns null if both buffers are busy or creation fails.
-export fn get_next_buffer(
+pub fn getNextBuffer(
     shm: ?*c.struct_wl_shm,
     pool: [*c]PoolBuffer,
     width: u32,
@@ -159,7 +159,7 @@ export fn get_next_buffer(
     const selected = buffer orelse return null;
 
     if (selected.width != width or selected.height != height) {
-        destroy_buffer(selected);
+        destroyBuffer(selected);
     }
 
     if (selected.buffer == null) {

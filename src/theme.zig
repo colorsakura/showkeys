@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const icons = @import("icons.zig");
 
 /// Alias for the C wsk_theme struct, maintaining ABI compatibility.
 /// Used by exported functions for seamless interop with app.zig via `c.*` calls.
@@ -37,7 +38,7 @@ pub fn init(theme: *Theme, key_svg_path: [*c]const u8) bool {
 /// Release theme resources: icon cache, base directory string,
 /// and the key SVG handle.
 pub fn finish(theme: *Theme) void {
-    c.wsk_icon_cache_finish(&theme.icons);
+    icons.cacheFinish(&theme.icons);
     c.free(theme.base_dir);
     if (theme.key_svg) |svg| {
         c.g_object_unref(svg);

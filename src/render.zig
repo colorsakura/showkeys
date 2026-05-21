@@ -1,5 +1,9 @@
+const std = @import("std");
 const c = @import("c");
 const color = @import("color.zig");
+const shm = @import("shm.zig");
+const keycap = @import("keycap.zig");
+const wl_mod = @import("wayland.zig");
 
 // ---------------------------------------------------------------------------
 // Font options helpers
@@ -33,7 +37,7 @@ fn setupFontOptions(cairo: ?*c.cairo_t, wl: *c.struct_wsk_wayland) void {
 
 /// Render a single frame: measure keycaps, resize if needed,
 /// acquire an SHM buffer, draw keycaps, and commit to the surface.
-export fn wsk_render_frame(app: *c.struct_wsk_app) void {
+pub fn renderFrame(app: *c.struct_wsk_app) void {
     const wl = &app.wayland;
     const scale: c_int = if (wl.output) |output| output[0].scale else 1;
     var width: u32 = 0;
@@ -49,7 +53,7 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
     setupFontOptions(cairo, wl);
 
     var layouts: [*c]c.struct_keycap_layout = null;
-    const key_count = c.wsk_measure_keycaps(
+    const key_count = keycap.measureKeycaps(
         cairo,
         app.keys.head,
         &app.config,
@@ -69,7 +73,7 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
     if (surface_too_small or surface_too_large) {
         defer c.free(layouts);
         if (key_count == 0 or width == 0 or height == 0) {
-            c.wsk_wayland_destroy_layer_surface(wl);
+            wl_mod.destroyLayerSurface(wl);
         } else {
             c.zwlr_layer_surface_v1_set_size(wl.layer_surface, reserved_width, target_height);
         }
@@ -83,7 +87,7 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
     }
 
     // Phase 2: acquire an SHM buffer and render.
-    wl.current_buffer = c.get_next_buffer(
+    wl.current_buffer = shm.getNextBuffer(
         wl.shm,
         &wl.buffers,
         wl.width * @as(u32, @intCast(scale)),
@@ -93,22 +97,22 @@ export fn wsk_render_frame(app: *c.struct_wsk_app) void {
         c.free(layouts);
         return;
     }
-    const shm: ?*c.cairo_t = wl.current_buffer[0].cairo;
+    const cairo_ctx: ?*c.cairo_t = wl.current_buffer[0].cairo;
 
-    c.cairo_save(shm);
-    c.cairo_set_operator(shm, c.CAIRO_OPERATOR_CLEAR);
-    c.cairo_paint(shm);
-    c.cairo_restore(shm);
+    c.cairo_save(cairo_ctx);
+    c.cairo_set_operator(cairo_ctx, c.CAIRO_OPERATOR_CLEAR);
+    c.cairo_paint(cairo_ctx);
+    c.cairo_restore(cairo_ctx);
 
-    setupFontOptions(shm, wl);
+    setupFontOptions(cairo_ctx, wl);
 
-    c.cairo_set_operator(shm, c.CAIRO_OPERATOR_SOURCE);
-    color.setSourceU32(shm, app.config.background);
-    c.cairo_paint(shm);
-    c.cairo_set_operator(shm, c.CAIRO_OPERATOR_OVER);
+    c.cairo_set_operator(cairo_ctx, c.CAIRO_OPERATOR_SOURCE);
+    color.setSourceU32(cairo_ctx, app.config.background);
+    c.cairo_paint(cairo_ctx);
+    c.cairo_set_operator(cairo_ctx, c.CAIRO_OPERATOR_OVER);
 
-    c.wsk_render_keycaps(
-        shm,
+    keycap.renderKeycaps(
+        cairo_ctx,
         layouts,
         key_count,
         &app.config,

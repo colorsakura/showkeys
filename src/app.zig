@@ -4,12 +4,14 @@ const keys = @import("keys.zig");
 const config = @import("config.zig");
 const input = @import("input.zig");
 const theme = @import("theme.zig");
+const devmgr = @import("devmgr.zig");
+const wl = @import("wayland.zig");
 
 // ---------------------------------------------------------------------------
 // Type aliases
 // ---------------------------------------------------------------------------
 
-const App = c.struct_wsk_app;
+pub const App = c.struct_wsk_app;
 
 /// Get the current errno value via C __errno_location.
 fn errnoPtr() *c_int {
@@ -21,7 +23,7 @@ fn errnoPtr() *c_int {
 // ---------------------------------------------------------------------------
 
 /// Allocate the app struct and start the privileged device manager.
-export fn wsk_app_init_privileged(app_ptr: *?*App) bool {
+pub fn initPrivileged(app_ptr: *?*App) bool {
     const allocation = c.calloc(1, @sizeOf(App)) orelse {
         std.log.err("Failed to allocate app state", .{});
         return false;
@@ -29,7 +31,7 @@ export fn wsk_app_init_privileged(app_ptr: *?*App) bool {
     const app: *App = @ptrCast(@alignCast(allocation));
     app_ptr.* = app;
 
-    if (c.devmgr_start(&app.devmgr, &app.devmgr_pid, c.INPUTDEVPATH) > 0) {
+    if (devmgr.start(&app.devmgr, &app.devmgr_pid, c.INPUTDEVPATH) > 0) {
         c.free(app);
         app_ptr.* = null;
         return false;
@@ -38,7 +40,7 @@ export fn wsk_app_init_privileged(app_ptr: *?*App) bool {
 }
 
 /// Initialise the app: parse config, load theme, set up input and Wayland.
-export fn wsk_app_init(app: *App, argc: c_int, argv: [*c][*c]u8) bool {
+pub fn init(app: *App, argc: c_int, argv: [*c][*c]u8) bool {
     // The Config extern struct shares layout with c.struct_wsk_config, so
     // the pointer cast is safe — no field conversion needed.
     const cfg: *config.Config = @ptrCast(&app.config);
@@ -49,14 +51,14 @@ export fn wsk_app_init(app: *App, argc: c_int, argv: [*c][*c]u8) bool {
     _ = theme.init(&app.theme, app.config.key_svg_path);
 
     if (!input.init(&app.input, app)) return false;
-    if (!c.wsk_wayland_init(&app.wayland, app)) return false;
+    if (!wl.init(&app.wayland, app)) return false;
 
     return true;
 }
 
 /// Main event loop: poll input and Wayland fds, dispatch events,
 /// handle key expiry.
-export fn wsk_app_run(app: *App) c_int {
+pub fn run(app: *App) c_int {
     if (app.config.exit_after_parse) return app.config.exit_code;
 
     var pollfds = [_]c.struct_pollfd{
@@ -66,7 +68,7 @@ export fn wsk_app_run(app: *App) c_int {
             .revents = 0,
         },
         .{
-            .fd = c.wsk_wayland_get_fd(&app.wayland),
+            .fd = wl.getFd(&app.wayland),
             .events = c.POLLIN,
             .revents = 0,
         },
@@ -76,7 +78,7 @@ export fn wsk_app_run(app: *App) c_int {
     while (app.run) {
         errnoPtr().* = 0;
         while (true) {
-            if (c.wsk_wayland_flush(&app.wayland) == -1) {
+            if (wl.flush(&app.wayland) == -1) {
                 std.log.err("wl_display_flush: {s}", .{c.strerror(errnoPtr().*)});
                 break;
             }
@@ -101,11 +103,11 @@ export fn wsk_app_run(app: *App) c_int {
                 input.handleEvent(app, event, &input_dirty);
                 c.libinput_event_destroy(event);
             }
-            if (input_dirty) c.wsk_wayland_set_dirty(app);
+            if (input_dirty) wl.setDirty(app);
         }
 
         if ((pollfds[1].revents & c.POLLIN) != 0 and
-            c.wsk_wayland_dispatch(&app.wayland, app) == -1)
+            wl.dispatch(&app.wayland, app) == -1)
         {
             std.log.err("wl_display_dispatch: {s}", .{c.strerror(errnoPtr().*)});
             break;
@@ -119,22 +121,22 @@ export fn wsk_app_run(app: *App) c_int {
             .tv_nsec = now.tv_nsec,
         })) {
             key_list.clear();
-            c.wsk_wayland_set_dirty(app);
+            wl.setDirty(app);
         }
     }
     return 0;
 }
 
 /// Release all resources and shut down.
-export fn wsk_app_finish(app: ?*App) void {
+pub fn finish(app: ?*App) void {
     const state = app orelse return;
 
     const key_list: *keys.KeyList = @ptrCast(&state.keys);
     key_list.clear();
     theme.finish(&state.theme);
     input.finish(&state.input);
-    c.wsk_wayland_finish(&state.wayland);
-    c.devmgr_finish(state.devmgr, state.devmgr_pid);
+    wl.finish(&state.wayland);
+    devmgr.finish(state.devmgr, state.devmgr_pid);
     c.free(state);
 
     // Release the keypress memory pool after all key lists are exhausted.

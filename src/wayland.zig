@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const input = @import("input.zig");
+const render_mod = @import("render.zig");
 
 /// Type aliases for C structs, maintaining ABI compatibility.
 const App = c.struct_wsk_app;
@@ -39,7 +40,7 @@ fn layerSurfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_zwlr_layer_surfa
     wayland.layer_configured = true;
     wayland.layer_pending_configure = false;
     c.zwlr_layer_surface_v1_ack_configure(surface, serial);
-    wsk_wayland_set_dirty(app);
+    setDirty(app);
 }
 
 fn layerSurfaceClosed(data: ?*anyopaque, surface: ?*c.struct_zwlr_layer_surface_v1) callconv(.c) void {
@@ -65,7 +66,7 @@ fn surfaceEnter(data: ?*anyopaque, surface: ?*c.struct_wl_surface, output: ?*c.s
     while (wsk_output) |candidate| {
         if (candidate[0].output == output) {
             wayland.output = candidate;
-            wsk_wayland_set_dirty(app);
+            setDirty(app);
             return;
         }
         wsk_output = candidate[0].next;
@@ -158,7 +159,7 @@ fn frameDone(data: ?*anyopaque, callback: ?*c.struct_wl_callback, callback_data:
 
     if (wayland.dirty and wayland.layer_configured and wayland.surface != null) {
         wayland.dirty = false;
-        c.wsk_render_frame(app);
+        render_mod.renderFrame(app);
     }
 }
 
@@ -312,7 +313,7 @@ const registry_listener: c.struct_wl_registry_listener = .{
 // ---------------------------------------------------------------------------
 
 /// Destroy the layer surface and its associated resources.
-export fn wsk_wayland_destroy_layer_surface(wayland: *Wayland) void {
+pub fn destroyLayerSurface(wayland: *Wayland) void {
     if (wayland.frame_callback) |callback| {
         c.wl_callback_destroy(callback);
         wayland.frame_callback = null;
@@ -350,7 +351,7 @@ fn createLayerSurface(app: *App) bool {
         "showkeys",
     );
     if (wayland.layer_surface == null) {
-        wsk_wayland_destroy_layer_surface(wayland);
+        destroyLayerSurface(wayland);
         wayland.surface = null;
         return false;
     }
@@ -384,7 +385,7 @@ fn requestLayerConfigure(app: *App) void {
 
 /// Mark the app as dirty and schedule a re-render.
 /// If the layer surface is not yet configured, requests a configure first.
-export fn wsk_wayland_set_dirty(app: *App) void {
+pub fn setDirty(app: *App) void {
     const wayland = &app.wayland;
     if (wayland.frame_scheduled or wayland.layer_pending_configure or !wayland.layer_configured) {
         wayland.dirty = true;
@@ -393,13 +394,13 @@ export fn wsk_wayland_set_dirty(app: *App) void {
         }
     } else if (wayland.surface != null) {
         wayland.dirty = false;
-        c.wsk_render_frame(app);
+        render_mod.renderFrame(app);
     }
 }
 
 /// Initialize the Wayland connection, bind global interfaces, and
 /// register the seat listener. Returns true on success.
-export fn wsk_wayland_init(wayland: *Wayland, app: *App) bool {
+pub fn init(wayland: *Wayland, app: *App) bool {
     wayland.* = .{};
 
     wayland.display = c.wl_display_connect(null);
@@ -435,8 +436,8 @@ export fn wsk_wayland_init(wayland: *Wayland, app: *App) bool {
 }
 
 /// Release all Wayland resources.
-export fn wsk_wayland_finish(wayland: *Wayland) void {
-    wsk_wayland_destroy_layer_surface(wayland);
+pub fn finish(wayland: *Wayland) void {
+    destroyLayerSurface(wayland);
     var output = wayland.outputs;
     while (output) |current| {
         const next = current[0].next;
@@ -453,18 +454,18 @@ export fn wsk_wayland_finish(wayland: *Wayland) void {
 }
 
 /// Get the Wayland display file descriptor for polling.
-export fn wsk_wayland_get_fd(wayland: *Wayland) c_int {
+pub fn getFd(wayland: *Wayland) c_int {
     return c.wl_display_get_fd(wayland.display);
 }
 
 /// Dispatch pending Wayland events.
-export fn wsk_wayland_dispatch(wayland: *Wayland, app: *App) c_int {
+pub fn dispatch(wayland: *Wayland, app: *App) c_int {
     _ = app;
     return c.wl_display_dispatch(wayland.display);
 }
 
 /// Flush pending Wayland requests. Returns 0 on success, -1 on error.
-export fn wsk_wayland_flush(wayland: *Wayland) c_int {
+pub fn flush(wayland: *Wayland) c_int {
     const ret = c.wl_display_flush(wayland.display);
     if (ret == -1 and c.__errno_location().* != c.EAGAIN) return -1;
     return 0;

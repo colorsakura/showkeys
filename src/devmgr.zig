@@ -159,7 +159,7 @@ fn run(sock: c_int, devpath: [*c]const u8) noreturn {
 
 /// Start the privileged device manager child process.
 /// Returns 0 on success, 1 on privilege errors, -1 on system call failures.
-export fn devmgr_start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
+pub fn start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
     if (c.geteuid() != 0) {
         std.log.err("showkeys needs to be setuid to read input events", .{});
         return 1;
@@ -205,7 +205,7 @@ export fn devmgr_start(fd: *c_int, pid: *c.pid_t, devpath: [*c]const u8) c_int {
 
 /// Open a device node through the privileged child process.
 /// Returns a file descriptor on success, or a negative errno on failure.
-export fn devmgr_open(sockfd: c_int, path: [*c]const u8) c_int {
+pub fn open(sockfd: c_int, path: [*c]const u8) c_int {
     var msg: Msg = .{
         .msg_type = .open,
         .path = @as([path_max]u8, @splat(0)),
@@ -228,7 +228,7 @@ export fn devmgr_open(sockfd: c_int, path: [*c]const u8) c_int {
 }
 
 /// Shut down the device manager child process and wait for it to exit.
-export fn devmgr_finish(sock: c_int, pid: c.pid_t) void {
+pub fn finish(sock: c_int, pid: c.pid_t) void {
     var msg: Msg = .{
         .msg_type = .end,
         .path = @as([path_max]u8, @splat(0)),

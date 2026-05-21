@@ -137,17 +137,16 @@ pub fn specialIconName(key_name: []const u8) ?[:0]const u8 {
 // ---------------------------------------------------------------------------
 
 /// C ABI wrapper for specialIconName.
-export fn wsk_special_icon_name(key_name: [*c]const u8) [*c]const u8 {
+pub fn specialIconNameC(key_name: [*c]const u8) [*c]const u8 {
     const key_name_bytes = std.mem.sliceTo(key_name orelse return null, 0);
     const icon_name = specialIconName(key_name_bytes) orelse return null;
     return icon_name.ptr;
 }
 
 /// Find or load an SVG icon for the given icon name.
-/// Uses a module-level `StringHashMap` instead of the C linked list
-/// stored in `c.struct_wsk_icon_cache` (the C struct field is unused).
+/// Uses a module-level `StringHashMap` instead of the C linked list.
 /// Returns the RsvgHandle, or null if the icon is not found or failed.
-export fn wsk_icon_cache_get(
+pub fn cacheGet(
     cache: *c.struct_wsk_icon_cache,
     base_dir: [*c]const u8,
     icon_name: [*c]const u8,
@@ -185,7 +184,7 @@ export fn wsk_icon_cache_get(
 }
 
 /// Free all entries in the icon cache.
-export fn wsk_icon_cache_finish(cache: *c.struct_wsk_icon_cache) void {
+pub fn cacheFinish(cache: *c.struct_wsk_icon_cache) void {
     _ = cache;
     deinitCache();
 }

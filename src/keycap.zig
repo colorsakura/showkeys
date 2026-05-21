@@ -2,6 +2,8 @@ const std = @import("std");
 const c = @import("c");
 const color = @import("color.zig");
 const thm = @import("theme.zig");
+const pango = @import("pango.zig");
+const icons = @import("icons.zig");
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -115,7 +117,7 @@ fn drawSvgIcon(cairo: ?*c.cairo_t, svg: ?*c.RsvgHandle, layout: *allowzero const
 
 /// Measure keycap layouts: compute dimensions for each visible keypress
 /// and return an array of keycap_layout structs.
-export fn wsk_measure_keycaps(
+pub fn measureKeycaps(
     cairo: ?*c.cairo_t,
     keys: [*c]const c.struct_wsk_keypress,
     config: *const c.struct_wsk_config,
@@ -149,7 +151,7 @@ export fn wsk_measure_keycaps(
     var text_min_width: c_int = 0;
     var text_min_height: c_int = 0;
     var text_min_baseline: c_int = 0;
-    c.get_text_size(cairo, config.font, &text_min_width, &text_min_height, &text_min_baseline, @floatFromInt(scale), "M");
+    pango.getTextSize(cairo, config.font, @ptrCast(&text_min_width), @ptrCast(&text_min_height), @ptrCast(&text_min_baseline), @floatFromInt(scale), "M");
 
     const min_content_width = @max(icon_size, text_min_width);
     const min_content_height = @max(icon_size, text_min_height);
@@ -164,9 +166,9 @@ export fn wsk_measure_keycaps(
         layout.key = key;
         layout.special = key[0].utf8[0] == 0;
         layout.label = if (layout.special) &key[0].name else &key[0].utf8;
-        layout.icon_name = if (layout.special) c.wsk_special_icon_name(&key[0].name) else null;
-        layout.icon_svg = c.wsk_icon_cache_get(&theme.icons, theme.base_dir, layout.icon_name);
-        c.get_text_size(cairo, config.font, &layout.text_width, &layout.text_height, &layout.text_baseline, @floatFromInt(scale), "%s", layout.label);
+        layout.icon_name = if (layout.special) icons.specialIconNameC(&key[0].name) else null;
+        layout.icon_svg = icons.cacheGet(&theme.icons, theme.base_dir, layout.icon_name);
+        pango.getTextSize(cairo, config.font, @ptrCast(&layout.text_width), @ptrCast(&layout.text_height), @ptrCast(&layout.text_baseline), @floatFromInt(scale), "%s", layout.label);
 
         var content_width = if (layout.icon_svg != null) icon_size else layout.text_width;
         var content_height = if (layout.icon_svg != null) icon_size else layout.text_height;
@@ -203,7 +205,7 @@ export fn wsk_measure_keycaps(
 }
 
 /// Render measured keycap layouts onto the Cairo context.
-export fn wsk_render_keycaps(
+pub fn renderKeycaps(
     cairo: ?*c.cairo_t,
     layouts: [*c]c.struct_keycap_layout,
     key_count: usize,
@@ -258,16 +260,16 @@ export fn wsk_render_keycaps(
         layout.text_y = layout.y + @divTrunc(layout.height - layout.text_height, 2);
         color.setSourceU32(cairo, if (layout.special) style.special_fg else style.normal_fg);
         c.cairo_move_to(cairo, @floatFromInt(layout.text_x), @floatFromInt(layout.text_y));
-        c.pango_printf(cairo, config.font, @floatFromInt(scale), "%s", layout.label);
+        pango.printf(cairo, config.font, @floatFromInt(scale), "%s", layout.label);
     }
 }
 
 /// Render keycaps directly to a Cairo context (convenience wrapper).
-export fn wsk_render_keycaps_to_cairo(
+pub fn renderKeycapsToCairo(
     cairo: ?*c.cairo_t,
     keys: [*c]const c.struct_wsk_keypress,
     config: *const c.struct_wsk_config,
-    theme: *c.struct_wsk_theme,
+    thm_param: *c.struct_wsk_theme,
     scale: c_int,
     width: *u32,
     height: *u32,
@@ -278,9 +280,9 @@ export fn wsk_render_keycaps_to_cairo(
     c.cairo_set_operator(cairo, c.CAIRO_OPERATOR_OVER);
 
     var layouts: [*c]c.struct_keycap_layout = null;
-    const key_count = wsk_measure_keycaps(cairo, keys, config, theme, scale, width, height, &layouts);
+    const key_count = measureKeycaps(cairo, keys, config, thm_param, scale, width, height, &layouts);
     if (layouts != null) {
-        wsk_render_keycaps(cairo, layouts, key_count, config, theme, scale, width.*, width.*);
+        renderKeycaps(cairo, layouts, key_count, config, thm_param, scale, width.*, width.*);
         c.free(layouts);
     }
 }

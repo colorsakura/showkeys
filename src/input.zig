@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const keys = @import("keys.zig");
+const devmgr = @import("devmgr.zig");
 
 /// Type aliases for C structs, maintaining ABI compatibility.
 const Input = c.struct_wsk_input;
@@ -12,7 +13,7 @@ const Keypress = c.struct_wsk_keypress;
 fn libinputOpenRestricted(path: [*c]const u8, flags: c_int, data: ?*anyopaque) callconv(.c) c_int {
     _ = flags;
     const fd: *c_int = @ptrCast(@alignCast(data.?));
-    return c.devmgr_open(fd.*, path);
+    return devmgr.open(fd.*, path);
 }
 
 /// libinput close_restricted callback.
