@@ -1,6 +1,7 @@
 const std = @import("std");
 
-const c_sources = [_][]const u8{};
+const default_devpath = "/dev/input/";
+const posix_c_source = "200809L";
 
 const pkg_config_deps = [_][]const u8{
     "cairo",
@@ -28,7 +29,7 @@ const Protocol = struct {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const devpath = b.option([]const u8, "devpath", "Input device path prefix compiled into the privileged device manager") orelse "/dev/input/";
+    const devpath = b.option([]const u8, "devpath", "Input device path prefix compiled into the privileged device manager") orelse default_devpath;
 
     const exe = b.addExecutable(.{
         .name = "showkeys",
@@ -44,20 +45,7 @@ pub fn build(b: *std.Build) void {
     });
     exe.use_new_linker = false;
     const root_module = exe.root_module;
-
-    root_module.addCSourceFiles(.{
-        .root = b.path("src"),
-        .files = &c_sources,
-        .flags = cFlags(),
-    });
-    root_module.addIncludePath(b.path("include"));
-    root_module.addCMacro("_POSIX_C_SOURCE", "200809L");
-    root_module.addCMacro("INPUTDEVPATH", b.fmt("\"{s}\"", .{devpath}));
-
-    for (pkg_config_deps) |dep| {
-        root_module.linkSystemLibrary(dep, .{ .use_pkg_config = .force });
-    }
-    root_module.linkSystemLibrary("rt", .{});
+    configureCModule(b, root_module, devpath);
 
     const wayland_scanner = b.findProgram(&.{"wayland-scanner"}, &.{}) catch @panic("wayland-scanner not found");
     const protocol_output_dir = generateProtocols(b, root_module, wayland_scanner);
@@ -67,26 +55,31 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 }
 
-fn cFlags() []const []const u8 {
-    return &.{
-        "-std=c11",
-        "-Wall",
-        "-Wextra",
-        "-Wundef",
-        "-Wmissing-include-dirs",
-        "-Wold-style-definition",
-        "-Wpointer-arith",
-        "-Winit-self",
-        "-Wstrict-prototypes",
-        "-Wimplicit-fallthrough",
-        "-Wendif-labels",
-        "-Wstrict-aliasing=2",
-        "-Woverflow",
-        "-Werror",
-        "-Wno-missing-braces",
-        "-Wno-missing-field-initializers",
-        "-Wno-unused-parameter",
-    };
+fn configureCModule(b: *std.Build, module: *std.Build.Module, devpath: []const u8) void {
+    module.addIncludePath(b.path("include"));
+    module.addCMacro("_POSIX_C_SOURCE", posix_c_source);
+    module.addCMacro("INPUTDEVPATH", cStringLiteral(b, devpath));
+    linkSystemLibraries(module);
+}
+
+fn configureTranslateC(b: *std.Build, translate_c: *std.Build.Step.TranslateC, devpath: []const u8, protocol_output_dir: std.Build.LazyPath) void {
+    translate_c.addIncludePath(b.path("include"));
+    translate_c.addIncludePath(protocol_output_dir);
+    translate_c.defineCMacro("_POSIX_C_SOURCE", posix_c_source);
+    translate_c.defineCMacro("INPUTDEVPATH", cStringLiteral(b, devpath));
+
+    linkSystemLibraries(translate_c);
+}
+
+fn linkSystemLibraries(linker: anytype) void {
+    for (pkg_config_deps) |dep| {
+        linker.linkSystemLibrary(dep, .{ .use_pkg_config = .force });
+    }
+    linker.linkSystemLibrary("rt", .{});
+}
+
+fn cStringLiteral(b: *std.Build, value: []const u8) []const u8 {
+    return b.fmt("\"{s}\"", .{value});
 }
 
 fn translateCBindings(
@@ -323,15 +316,7 @@ fn translateCBindings(
         .optimize = optimize,
         .link_libc = true,
     });
-    translate_c.addIncludePath(b.path("include"));
-    translate_c.addIncludePath(protocol_output_dir);
-    translate_c.defineCMacro("_POSIX_C_SOURCE", "200809L");
-    translate_c.defineCMacro("INPUTDEVPATH", b.fmt("\"{s}\"", .{devpath}));
-
-    for (pkg_config_deps) |dep| {
-        translate_c.linkSystemLibrary(dep, .{ .use_pkg_config = .force });
-    }
-    translate_c.linkSystemLibrary("rt", .{});
+    configureTranslateC(b, translate_c, devpath, protocol_output_dir);
 
     return translate_c.createModule();
 }
@@ -351,7 +336,6 @@ fn generateProtocols(b: *std.Build, module: *std.Build.Module, wayland_scanner: 
         const source = runWaylandScanner(b, wayland_scanner, "private-code", xml, source_path);
 
         _ = output.addCopyFile(header, header_path);
-        _ = output.addCopyFile(source, source_path);
         module.addCSourceFile(.{ .file = source, .flags = &.{} });
     }
 
