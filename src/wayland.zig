@@ -6,6 +6,26 @@ const App = c.struct_wsk_app;
 const Wayland = c.struct_wsk_wayland;
 const WskOutput = c.struct_wsk_output;
 
+/// Arena allocator for `wsk_output` nodes. These are allocated during
+/// registry enumeration and freed all at once in `wsk_wayland_finish()`, so
+/// an arena is the perfect fit — no need to track individual lifetimes.
+var output_arena: std.heap.ArenaAllocator = undefined;
+var output_arena_initialized = false;
+
+fn ensureOutputArena() void {
+    if (!output_arena_initialized) {
+        output_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        output_arena_initialized = true;
+    }
+}
+
+fn deinitOutputArena() void {
+    if (output_arena_initialized) {
+        output_arena.deinit();
+        output_arena_initialized = false;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Layer surface callbacks
 // ---------------------------------------------------------------------------
@@ -231,9 +251,13 @@ fn bindGlobal(comptime T: type, registry: ?*c.struct_wl_registry, name: u32, int
     return @ptrCast(@alignCast(c.wl_registry_bind(registry, name, interface, version)));
 }
 
-/// Compare two C strings for equality using Zig slice comparison.
+/// Compare two C strings for equality without allocating slices.
 fn cStrEq(a: [*c]const u8, b: [*c]const u8) bool {
-    return std.mem.eql(u8, std.mem.sliceTo(a, 0), std.mem.sliceTo(b, 0));
+    var i: usize = 0;
+    while (a[i] != 0 and b[i] != 0) : (i += 1) {
+        if (a[i] != b[i]) return false;
+    }
+    return a[i] == b[i];
 }
 
 fn registryGlobal(data: ?*anyopaque, registry: ?*c.struct_wl_registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
@@ -252,9 +276,9 @@ fn registryGlobal(data: ?*anyopaque, registry: ?*c.struct_wl_registry, name: u32
     } else if (cStrEq(interface, c.zwlr_layer_shell_v1_interface.name)) {
         wayland.layer_shell = bindGlobal(c.struct_zwlr_layer_shell_v1, registry, name, &c.zwlr_layer_shell_v1_interface, 1);
     } else if (cStrEq(interface, c.wl_output_interface.name)) {
-        const allocation = c.calloc(1, @sizeOf(WskOutput));
-        std.debug.assert(allocation != null);
-        const output: *WskOutput = @ptrCast(@alignCast(allocation.?));
+        ensureOutputArena();
+        const output = output_arena.allocator().create(WskOutput) catch return;
+        output.* = .{};
         output.output = bindGlobal(c.struct_wl_output, registry, name, &c.wl_output_interface, 3);
         output.scale = 1;
 
@@ -418,9 +442,10 @@ export fn wsk_wayland_finish(wayland: *Wayland) void {
         if (current[0].output) |wl_output| {
             c.wl_output_destroy(wl_output);
         }
-        c.free(current);
         output = next;
     }
+    // Free all output nodes in one shot.
+    deinitOutputArena();
     if (wayland.display) |display| {
         c.wl_display_disconnect(display);
     }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const keys = @import("keys.zig");
 
 /// Type aliases for C structs, maintaining ABI compatibility.
 const Input = c.struct_wsk_input;
@@ -82,13 +83,12 @@ fn pointerButtonName(button: u32) ?[:0]const u8 {
     };
 }
 
-/// Allocate a zero-initialized keypress struct.
-/// Uses C calloc since the keypress lifecycle is managed by C-side code
-/// (keys.zig frees via c.free).
-fn allocKeypress() *Keypress {
-    const allocation = c.calloc(1, @sizeOf(Keypress));
-    std.debug.assert(allocation != null);
-    return @ptrCast(@alignCast(allocation.?));
+/// Allocate a zero-initialized keypress struct via the Zig memory pool.
+/// Uses `keys.KeyList.createKeypress()` which manages the pool internally;
+/// the returned pointer is cast to the C-compatible struct type for legacy
+/// callsites that still go through the `c.*` bridge.
+fn allocKeypress() !*Keypress {
+    return @ptrCast(try keys.KeyList.createKeypress());
 }
 
 /// Handle a keyboard key event from libinput: translate the keycode
@@ -109,7 +109,7 @@ fn handleKeyboardKeyEvent(app: *App, kbevent: ?*c.struct_libinput_event_keyboard
 
     if (key_state != c.LIBINPUT_KEY_STATE_PRESSED) return;
 
-    const keypress = allocKeypress();
+    const keypress = allocKeypress() catch return;
     keypress.* = .{ .sym = keysym };
 
     _ = c.xkb_keysym_get_name(keysym, @ptrCast(&keypress.name), keypress.name.len);
@@ -128,7 +128,7 @@ fn handleKeyboardKeyEvent(app: *App, kbevent: ?*c.struct_libinput_event_keyboard
 
 /// Append a named pointer event (button press or scroll) to the key list.
 fn appendPointerEvent(app: *App, name: []const u8, dirty: *bool) void {
-    const keypress = allocKeypress();
+    const keypress = allocKeypress() catch return;
     keypress.sym = c.XKB_KEY_NoSymbol;
     keypress.utf8[0] = 0;
 

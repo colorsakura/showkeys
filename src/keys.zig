@@ -1,100 +1,111 @@
+const std = @import("std");
 const c = @import("c");
 
-/// Type aliases for C structs, maintaining ABI compatibility.
-pub const KeyList = c.struct_wsk_key_list;
-pub const Keypress = c.struct_wsk_keypress;
-pub const TimeSpec = c.struct_timespec;
+/// Memory pool for keypress allocations — much faster than a general-purpose
+/// allocator since every allocation is the same type.
+var keypress_pool: std.heap.memory_pool.ExtraManaged(Keypress, .{}) = .init(std.heap.page_allocator);
 
-/// Append a keypress to the linked list tail, then trim excess
-/// oldest entries beyond `max_keys`.
-pub fn append(keys: *KeyList, keypress: *Keypress, max_keys: c_int, now: TimeSpec) void {
-    keys.last_key = now;
-    keypress.next = null;
-
-    const key_count = appendToTail(keys, keypress);
-    trimOldest(keys, key_count, keyLimit(max_keys));
-}
-
-/// Free all keypresses in the list and reset it to empty.
-pub fn clear(keys: *KeyList) void {
-    var key = keys.head;
-    while (key) |current| {
-        const next = current.*.next;
-        destroyKeypress(current);
-        key = next;
-    }
-    keys.head = null;
-}
-
-/// Check whether the most recently pressed key has exceeded
-/// the display timeout.
-pub fn expired(keys: *const KeyList, timeout: c_int, now: TimeSpec) bool {
-    if (keys.head == null) return false;
-
-    return reachedDeadline(now, .{
-        .tv_sec = keys.last_key.tv_sec + timeout,
-        .tv_nsec = keys.last_key.tv_nsec,
-    });
+/// Release any resources held by the key allocation module.
+/// Must be called after all key lists are exhausted.
+pub fn deinitModule() void {
+    keypress_pool.deinit();
 }
 
 // ---------------------------------------------------------------------------
-// C ABI bridge — called from app.zig and input.zig via `c.*`
+// Types
 // ---------------------------------------------------------------------------
 
-export fn wsk_keys_append(
-    keys: *KeyList,
-    keypress: *Keypress,
-    max_keys: c_int,
-    now: *const TimeSpec,
-) void {
-    append(keys, keypress, max_keys, now.*);
-}
+/// Monotonic timestamp — mirrors POSIX `struct timespec` layout.
+/// Use `extern` so that @sizeOf(TimeSpec) == @sizeOf(c.struct_timespec)
+/// and the C ABI bridges can safely memcpy between the two.
+const TimeSpec = extern struct {
+    tv_sec: i64 = 0,
+    tv_nsec: i64 = 0,
+};
 
-export fn wsk_keys_clear(keys: *KeyList) void {
-    clear(keys);
-}
+/// A single keypress event with display metadata.
+/// Linked-list node; all fields are public for direct field access
+/// in input.zig (sym, name, utf8).
+/// `extern` guarantees in-memory layout matches the C ABI so the
+/// transitional `export fn` bridges can safely pass pointers.
+pub const Keypress = extern struct {
+    sym: u32 = 0,                      // xkb_keysym_t (uint32_t on all Linux targets)
+    name: [128]u8 = @splat(0),         // display name (NUL-terminated)
+    utf8: [128]u8 = @splat(0),         // UTF-8 text (NUL-terminated)
+    next: ?*Keypress = null,
+};
 
-export fn wsk_keys_expired(
-    keys: *const KeyList,
-    timeout: c_int,
-    now: TimeSpec,
-) bool {
-    return expired(keys, timeout, now);
-}
+/// Owning singly-linked list of keypresses with latest-event timestamp.
+/// `extern` guarantees in-memory layout matches the C ABI so the
+/// transitional `export fn` bridges can safely pass pointers.
+pub const KeyList = extern struct {
+    head: ?*Keypress = null,
+    last_key: TimeSpec = .{},
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Traverse to the tail of the linked list and append the keypress.
-/// Returns the new total key count.
-fn appendToTail(keys: *KeyList, keypress: *Keypress) usize {
-    var link: *allowzero [*c]Keypress = &keys.head;
-    var key_count: usize = 0;
-    while (link.*) |key| {
-        link = &key.*.next;
-        key_count += 1;
+    /// Allocate a zero-initialised Keypress from the pool.
+    /// The caller is responsible for filling in fields and then
+    /// passing ownership to `append()`.
+    pub fn createKeypress() !*Keypress {
+        return try keypress_pool.create();
     }
 
-    link.* = keypress;
-    return key_count + 1;
-}
+    /// Append a keypress to the tail of the list, update the timestamp,
+    /// then trim the oldest entries if the count exceeds `max_keys`.
+    /// Takes ownership of `keypress` (it will be freed on trim or deinit).
+    pub fn append(self: *KeyList, keypress: *Keypress, max_keys: u32, now: TimeSpec) void {
+        self.last_key = now;
+        keypress.next = null;
 
-/// Remove oldest entries from the head until the count is within `max_keys`.
-fn trimOldest(keys: *KeyList, key_count_initial: usize, max_keys: usize) void {
-    var key_count = key_count_initial;
-    while (key_count > max_keys) {
-        const oldest = keys.head orelse break;
-        keys.head = oldest.*.next;
-        destroyKeypress(oldest);
-        key_count -= 1;
+        const key_count = self.appendToTail(keypress);
+        self.trimOldest(key_count, if (max_keys == 0) 0 else max_keys);
     }
-}
 
-/// Convert a potentially-negative C max_keys value to a safe usize limit.
-fn keyLimit(max_keys: c_int) usize {
-    return if (max_keys <= 0) 0 else @intCast(max_keys);
-}
+    /// Free all keypresses and reset the list to empty.
+    pub fn clear(self: *KeyList) void {
+        var key = self.head;
+        while (key) |current| {
+            const next = current.next;
+            keypress_pool.destroy(current);
+            key = next;
+        }
+        self.head = null;
+    }
+
+    /// Return `true` if the most recent keypress has been displayed
+    /// for longer than `timeout_seconds`.
+    pub fn expired(self: *const KeyList, timeout_seconds: u32, now: TimeSpec) bool {
+        if (self.head == null) return false;
+
+        const deadline = TimeSpec{
+            .tv_sec = self.last_key.tv_sec + @as(i64, @intCast(timeout_seconds)),
+            .tv_nsec = self.last_key.tv_nsec,
+        };
+        return reachedDeadline(now, deadline);
+    }
+
+    // -- internal helpers ---------------------------------------------
+
+    fn appendToTail(self: *KeyList, keypress: *Keypress) usize {
+        var link = &self.head;
+        var key_count: usize = 0;
+        while (link.*) |key| {
+            link = &key.next;
+            key_count += 1;
+        }
+        link.* = keypress;
+        return key_count + 1;
+    }
+
+    fn trimOldest(self: *KeyList, key_count_initial: usize, max_keys: usize) void {
+        var key_count = key_count_initial;
+        while (key_count > max_keys) {
+            const oldest = self.head orelse break;
+            self.head = oldest.next;
+            keypress_pool.destroy(oldest);
+            key_count -= 1;
+        }
+    }
+};
 
 /// Compare two timestamps, returning true if `now` has passed `deadline`.
 fn reachedDeadline(now: TimeSpec, deadline: TimeSpec) bool {
@@ -103,7 +114,36 @@ fn reachedDeadline(now: TimeSpec, deadline: TimeSpec) bool {
     return now.tv_nsec >= deadline.tv_nsec;
 }
 
-/// Free a C-allocated keypress struct.
-fn destroyKeypress(keypress: [*c]Keypress) void {
-    c.free(keypress);
+// ---------------------------------------------------------------------------
+// Transitional C ABI bridges (used from app.zig and input.zig via `c.*`)
+// Will be removed when callers migrate to the Zig API.
+// ---------------------------------------------------------------------------
+
+/// Bridge: copy a C timespec into a Zig TimeSpec then call `append()`.
+/// `max_keys` is i32 to match the C struct `wsk_config.max_keys` layout.
+export fn wsk_keys_append(
+    keys: *KeyList,
+    keypress: *Keypress,
+    max_keys: i32,
+    now: *c.struct_timespec,
+) void {
+    keys.append(keypress, @intCast(max_keys), .{
+        .tv_sec = now.*.tv_sec,
+        .tv_nsec = now.*.tv_nsec,
+    });
+}
+
+export fn wsk_keys_clear(keys: *KeyList) void {
+    keys.clear();
+}
+
+export fn wsk_keys_expired(
+    keys: *const KeyList,
+    timeout: i32,
+    now: c.struct_timespec,
+) bool {
+    return keys.expired(@intCast(timeout), .{
+        .tv_sec = now.tv_sec,
+        .tv_nsec = now.tv_nsec,
+    });
 }

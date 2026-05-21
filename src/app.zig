@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const keys = @import("keys.zig");
 
 // ---------------------------------------------------------------------------
 // Type aliases
@@ -124,4 +125,7 @@ export fn wsk_app_finish(app: ?*App) void {
     c.wsk_wayland_finish(&state.wayland);
     c.devmgr_finish(state.devmgr, state.devmgr_pid);
     c.free(state);
+
+    // Release the keypress memory pool after all key lists are exhausted.
+    keys.deinitModule();
 }
