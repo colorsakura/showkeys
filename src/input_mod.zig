@@ -140,6 +140,9 @@ pub const InputModule = struct {
 
         _ = c.xkb_keysym_get_name(keysym, @ptrCast(&keypress.name), keypress.name.len);
 
+        // Normalise legacy X11 key names to user-friendly labels.
+        fixXkbKeyName(&keypress.name);
+
         if (c.xkb_state_key_get_utf8(self.xkb_state, keycode, @ptrCast(&keypress.utf8), keypress.utf8.len) <= 0 or
             keypress.utf8[0] <= ' ')
         {
@@ -190,6 +193,23 @@ pub const InputModule = struct {
 // ---------------------------------------------------------------------------
 // Module-level helpers (no self)
 // ---------------------------------------------------------------------------
+
+/// Replace legacy XKB key names (inherited from X11) with standard
+/// labels that users actually recognise.
+fn fixXkbKeyName(name: *[128]u8) void {
+    // Find the NUL terminator to get the slice length.
+    const len = std.mem.indexOfScalar(u8, name[0..], 0) orelse 128;
+    const slice = name[0..len];
+
+    // Note: comparison is case-sensitive — xkb returns PascalCase names.
+    if (std.mem.eql(u8, slice, "Prior")) {
+        @memcpy(name[0..6], "PageUp");
+        name[6] = 0;
+    } else if (std.mem.eql(u8, slice, "Next")) {
+        @memcpy(name[0..8], "PageDown");
+        name[8] = 0;
+    }
+}
 
 /// Map a libinput button constant to a human-readable name.
 fn pointerButtonName(button: u32) ?[:0]const u8 {
