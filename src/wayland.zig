@@ -2,8 +2,7 @@ const std = @import("std");
 const c = @import("c");
 const wl_mod = @import("wayland");
 const types = @import("types.zig");
-const input = @import("input.zig");
-const render_mod = @import("render.zig");
+const events = @import("event.zig");
 
 const wl = wl_mod.client.wl;
 const zwlr = wl_mod.client.zwlr;
@@ -32,7 +31,7 @@ fn deinitOutputArena() void {
 }
 
 // ---------------------------------------------------------------------------
-// Layer surface listener
+// Layer surface listener — publishes events to the bus
 // ---------------------------------------------------------------------------
 
 fn layerSurfaceListener(ls: *zwlr.LayerSurfaceV1, event: zwlr.LayerSurfaceV1.Event, data: *App) void {
@@ -44,31 +43,24 @@ fn layerSurfaceListener(ls: *zwlr.LayerSurfaceV1, event: zwlr.LayerSurfaceV1.Eve
             wayland.layer_configured = true;
             wayland.layer_pending_configure = false;
             ls.ackConfigure(ev.serial);
-            setDirty(data);
+
+            // Notify the wayland_mod and others.
+            data.wayland_mod.onLayerConfigured(ev.width, ev.height, ev.serial);
         },
         .closed => {
-            data.run = false;
+            data.wayland_mod.onLayerClosed();
         },
     }
 }
 
 // ---------------------------------------------------------------------------
-// Surface listener
+// Surface listener — publishes events to the bus
 // ---------------------------------------------------------------------------
 
 fn surfaceListener(surface: *wl.Surface, event: wl.Surface.Event, data: *App) void {
     switch (event) {
         .enter => |ev| {
-            const wayland = &data.wayland;
-            var wsk_output = wayland.outputs;
-            while (wsk_output) |candidate| {
-                if (candidate.output == ev.output) {
-                    wayland.output = candidate;
-                    setDirty(data);
-                    return;
-                }
-                wsk_output = candidate.next;
-            }
+            data.wayland_mod.onSurfaceEnteredOutput(ev.output);
         },
         .leave => {},
     }
@@ -76,13 +68,19 @@ fn surfaceListener(surface: *wl.Surface, event: wl.Surface.Event, data: *App) vo
 }
 
 // ---------------------------------------------------------------------------
-// Keyboard listener
+// Keyboard listener — publishes keymap_updated events
 // ---------------------------------------------------------------------------
 
 fn keyboardListener(kb: *wl.Keyboard, event: wl.Keyboard.Event, data: *App) void {
     switch (event) {
         .keymap => |ev| {
-            input.setKeymapFromFd(&data.input, @intCast(@intFromEnum(ev.format)), ev.fd, ev.size);
+            data.event_bus.publish(.{
+                .keymap_updated = .{
+                    .format = @intCast(@intFromEnum(ev.format)),
+                    .fd = ev.fd,
+                    .size = ev.size,
+                },
+            });
         },
         .enter => {},
         .leave => {},
@@ -112,17 +110,12 @@ fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, data: *App) void {
             wayland.keyboard = seat.getKeyboard() catch return;
             wayland.keyboard.?.setListener(*App, keyboardListener, data);
         },
-        .name => {
-            if (c.libinput_udev_assign_seat(data.input.libinput, "seat0") != 0) {
-                std.log.err("Failed to assign libinput seat", .{});
-                data.run = false;
-            }
-        },
+        .name => {},
     }
 }
 
 // ---------------------------------------------------------------------------
-// Output listener
+// Output listener — tracks scale and subpixel for HiDPI
 // ---------------------------------------------------------------------------
 
 fn outputListener(output: *wl.Output, event: wl.Output.Event, data: *WskOutput) void {
@@ -200,6 +193,28 @@ fn displayFlush(display: *wl.Display) c_int {
 // Public API
 // ---------------------------------------------------------------------------
 
+/// Destroy the entire layer surface (surface + layer surface + frame callback).
+pub fn destroyLayerSurface(wayland: *types.Wayland) void {
+    if (wayland.frame_callback) |callback| {
+        callback.destroy();
+        wayland.frame_callback = null;
+    }
+    wayland.frame_scheduled = false;
+    if (wayland.layer_surface) |layer_surface| {
+        layer_surface.destroy();
+        wayland.layer_surface = null;
+    }
+    if (wayland.surface) |surface| {
+        surface.destroy();
+        wayland.surface = null;
+    }
+    wayland.output = null;
+    wayland.width = 0;
+    wayland.height = 0;
+    wayland.layer_configured = false;
+    wayland.layer_pending_configure = false;
+}
+
 /// Create the layer surface and register listeners.
 fn createLayerSurface(app: *App) bool {
     const wayland = &app.wayland;
@@ -214,7 +229,7 @@ fn createLayerSurface(app: *App) bool {
         .overlay,
         "showkeys",
     ) catch {
-        render_mod.destroyLayerSurface(wayland);
+        destroyLayerSurface(wayland);
         return false;
     };
     wayland.layer_surface.?.setListener(*App, layerSurfaceListener, app);
@@ -223,7 +238,7 @@ fn createLayerSurface(app: *App) bool {
 }
 
 /// Request a configure round-trip for the layer surface.
-fn requestLayerConfigure(app: *App) void {
+pub fn requestLayerConfigure(app: *App) void {
     const wayland = &app.wayland;
     if (wayland.layer_pending_configure or app.keys.head == null) return;
     if (!createLayerSurface(app)) return;
@@ -239,20 +254,6 @@ fn requestLayerConfigure(app: *App) void {
     wayland.layer_surface.?.setExclusiveZone(-1);
     wayland.surface.?.commit();
     wayland.layer_pending_configure = true;
-}
-
-/// Mark the app as dirty and schedule a re-render.
-pub fn setDirty(app: *App) void {
-    const wayland = &app.wayland;
-    if (wayland.frame_scheduled or wayland.layer_pending_configure or !wayland.layer_configured) {
-        wayland.dirty = true;
-        if (!wayland.layer_configured) {
-            requestLayerConfigure(app);
-        }
-    } else if (wayland.surface != null) {
-        wayland.dirty = false;
-        render_mod.renderFrame(app);
-    }
 }
 
 /// Initialize the Wayland connection, bind global interfaces, and
@@ -296,7 +297,7 @@ pub fn init(wayland: *Wayland, app: *App) bool {
 
 /// Release all Wayland resources.
 pub fn finish(wayland: *Wayland) void {
-    render_mod.destroyLayerSurface(wayland);
+    destroyLayerSurface(wayland);
     var output = wayland.outputs;
     while (output) |current| {
         const next = current.next;

@@ -1,6 +1,7 @@
 const c = @import("c");
 const wayland_mod = @import("wayland");
 const keys_mod = @import("keys.zig");
+const events = @import("event.zig");
 
 // ---------------------------------------------------------------------------
 // Convenience aliases for wayland namespace nesting
@@ -97,6 +98,17 @@ pub const Wayland = struct {
 };
 
 // ---------------------------------------------------------------------------
+// RenderModState — per-frame state for the render module.
+// Owned by App.render_mod; referenced by render_mod.zig internally.
+// ---------------------------------------------------------------------------
+
+pub const RenderModState = struct {
+    frame_scheduled: bool = false,
+    frame_callback: ?*wl.Callback = null,
+    pending_render: bool = false,
+};
+
+// ---------------------------------------------------------------------------
 // App — root application state
 // ---------------------------------------------------------------------------
 
@@ -105,9 +117,15 @@ pub const App = struct {
     devmgr_pid: c.pid_t = 0,
     config: Config = .{},
     input: Input = .{},
+    input_mod: @import("input_mod.zig").InputModule = .{},
+    input_mod_libinput: ?*c.struct_libinput = null,
     theme: Theme = .{},
     wayland: Wayland = .{},
+    wayland_mod: @import("wayland_mod.zig").WaylandModule = .{},
+    render_mod: RenderModState = .{},
     keys: KeyList = .{},
+    event_bus: events.EventBus = .{},
+    timer_fd: c_int = -1,
     run: bool = false,
 };
 

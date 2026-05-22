@@ -17,7 +17,7 @@ pub fn deinitModule() void {
 /// Monotonic timestamp — mirrors POSIX `struct timespec` layout.
 /// Use `extern` so that @sizeOf(TimeSpec) == @sizeOf(c.struct_timespec)
 /// and the C ABI bridges can safely memcpy between the two.
-const TimeSpec = extern struct {
+pub const TimeSpec = extern struct {
     tv_sec: i64 = 0,
     tv_nsec: i64 = 0,
 };

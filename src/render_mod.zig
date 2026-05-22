@@ -1,15 +1,41 @@
 const std = @import("std");
 const c = @import("c");
 const wl_mod = @import("wayland");
-const wl = wl_mod.client.wl;
-const zwlr = wl_mod.client.zwlr;
+const events = @import("event.zig");
+const module = @import("module.zig");
 const types = @import("types.zig");
 const color = @import("color.zig");
 const shm = @import("shm.zig");
 const keycap = @import("keycap.zig");
 
+const wl = wl_mod.client.wl;
+
 const App = types.App;
 const KeycapLayout = types.KeycapLayout;
+
+// ---------------------------------------------------------------------------
+// RenderModule — manages frame scheduling and rendering.
+//
+// Responsibilities:
+//   - Subscribe to `request_render` and `frame_done` events.
+//   - On `request_render`: measure keycaps, acquire SHM buffer, draw,
+//     commit surface, schedule frame callback.
+//   - On `frame_done`: check if a new render is pending, if so render again.
+//   - Manage the frame callback lifecycle to avoid over-committing.
+//
+// References:
+//   - Wayland surface + layer surface (owned by wayland.zig / Wayland struct)
+//   - SHM pool + buffers (owned by wayland.zig / Wayland struct)
+//   - Key list + config (owned by App)
+//   - Theme (owned by App)
+//
+// RenderModule does NOT own any Wayland objects — it borrows them from
+// the App struct via the context pointer.
+// ---------------------------------------------------------------------------
+
+/// Opaque context alias for the rendering state.
+/// Points to `types.App`, but RenderModule accesses only the fields it needs.
+const RenderCtx = types.App;
 
 // ---------------------------------------------------------------------------
 // Font options helpers
@@ -42,34 +68,90 @@ fn setupFontOptions(cairo: ?*c.cairo_t, wl_state: *types.Wayland) void {
 // Frame callback listener
 // ---------------------------------------------------------------------------
 
-/// Frame-done callback — called when the compositor has processed the
-/// committed surface state.  Triggers a redraw if the app is dirty.
-fn frameListener(callback: *wl.Callback, event: wl.Callback.Event, data: *App) void {
+/// Frame-done callback — called by the compositor when it has finished
+/// processing the committed surface state.
+fn frameCallback(callback: *wl.Callback, event: wl.Callback.Event, data: *App) void {
+    _ = callback;
     switch (event) {
         .done => {
-            const wayland = &data.wayland;
-            callback.destroy();
-            wayland.frame_callback = null;
-            wayland.frame_scheduled = false;
-
-            if (wayland.dirty and wayland.layer_configured and wayland.surface != null) {
-                wayland.dirty = false;
-                renderFrame(data);
-            }
+            const app = data;
+            app.render_mod.frame_callback = null;
+            app.render_mod.frame_scheduled = false;
+            app.event_bus.publish(.frame_done);
         },
     }
 }
 
 // ---------------------------------------------------------------------------
-// Main render entry point
+// Public API — called via event bus or directly from main loop
+// ---------------------------------------------------------------------------
+
+/// Event handler for the render module.
+pub fn handleEvent(ctx: *anyopaque, event: events.Event) void {
+    const app: *App = @ptrCast(@alignCast(ctx));
+
+    switch (event) {
+        .request_render => {
+            requestRender(app);
+        },
+        .frame_done => {
+            handleFrameDone(app);
+        },
+        .layer_configured => {
+            // The Wayland state is already updated in the listener;
+            // nothing extra needed here.  If we had a pending render,
+            // it will be picked up by the next request_render.
+        },
+        else => {},
+    }
+}
+
+/// Called when a render is requested (e.g. after a keypress or
+/// layer configure).  Schedules a frame if one is not already in flight.
+fn requestRender(app: *App) void {
+    const wl_state = &app.wayland;
+    const rmod = &app.render_mod;
+
+    if (!wl_state.layer_configured or wl_state.surface == null) {
+        // Not ready yet — mark pending and return.
+        // The caller (app.zig :: requestRender) should have already
+        // called wl.requestLayerConfigure; if not, do it here.
+        rmod.pending_render = true;
+        return;
+    }
+
+    if (rmod.frame_scheduled) {
+        // A frame is already in flight — defer until frame_done.
+        rmod.pending_render = true;
+        return;
+    }
+
+    // Ready to render now.
+    rmod.pending_render = false;
+    renderFrame(app);
+}
+
+/// Called when the compositor signals that a frame has been presented.
+fn handleFrameDone(app: *App) void {
+    const rmod = &app.render_mod;
+
+    // If a render was requested while the last frame was in flight,
+    // render again immediately.
+    if (rmod.pending_render and app.wayland.layer_configured and app.wayland.surface != null) {
+        rmod.pending_render = false;
+        renderFrame(app);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Core render logic
 // ---------------------------------------------------------------------------
 
 /// Render a single frame: measure keycaps, resize if needed,
 /// acquire an SHM buffer, draw keycaps, and commit to the surface.
-/// This is the direct rendering path (used when the event-driven
-/// RenderModule is not yet handling the request).
-pub fn renderFrame(app: *App) void {
+fn renderFrame(app: *App) void {
     const wl_state = &app.wayland;
+    const rmod = &app.render_mod;
     const scale: c_int = if (wl_state.output) |output| output.scale else 1;
     var width: u32 = 0;
     var height: u32 = 0;
@@ -111,7 +193,7 @@ pub fn renderFrame(app: *App) void {
 
     if (surface_too_small or surface_too_large) {
         if (key_count == 0 or width == 0 or height == 0) {
-            @import("wayland.zig").destroyLayerSurface(wl_state);
+            resetSurfaceState(rmod, wl_state);
         } else if (wl_state.layer_surface) |layer_surface| {
             layer_surface.setSize(reserved_width, target_height);
         }
@@ -168,10 +250,28 @@ pub fn renderFrame(app: *App) void {
         @intCast(wl_state.height * @as(u32, @intCast(scale))),
     );
 
-    // Request a frame callback from the compositor.
-    wl_state.frame_callback = surface.frame() catch return;
-    wl_state.frame_callback.?.setListener(*App, frameListener, app);
-    wl_state.frame_scheduled = true;
+    // Schedule the next frame callback via the render module.
+    _ = requestFrameCallback(rmod, surface, app);
 
     surface.commit();
+}
+
+// ---------------------------------------------------------------------------
+// RenderModule methods (operate on the render_mod field of App)
+// ---------------------------------------------------------------------------
+
+/// Request a frame callback on the given surface.
+/// Returns true if a callback was created.
+fn requestFrameCallback(rmod: *types.RenderModState, surface: *wl.Surface, app: *App) bool {
+    if (rmod.frame_scheduled) return false;
+    rmod.frame_callback = surface.frame() catch return false;
+    rmod.frame_callback.?.setListener(*App, frameCallback, app);
+    rmod.frame_scheduled = true;
+    return true;
+}
+
+/// Reset layer surface state (e.g. when the surface is destroyed).
+fn resetSurfaceState(rmod: *types.RenderModState, wl_state: *types.Wayland) void {
+    _ = rmod;
+    @import("wayland.zig").destroyLayerSurface(wl_state);
 }
