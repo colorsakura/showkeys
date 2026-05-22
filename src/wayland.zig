@@ -1,8 +1,6 @@
 const std = @import("std");
-const c = @import("c");
 const wl_mod = @import("wayland");
 const types = @import("types.zig");
-const events = @import("event.zig");
 
 const wl = wl_mod.client.wl;
 const zwlr = wl_mod.client.zwlr;
@@ -57,21 +55,20 @@ fn layerSurfaceListener(ls: *zwlr.LayerSurfaceV1, event: zwlr.LayerSurfaceV1.Eve
 // Surface listener — publishes events to the bus
 // ---------------------------------------------------------------------------
 
-fn surfaceListener(surface: *wl.Surface, event: wl.Surface.Event, data: *App) void {
+fn surfaceListener(_: *wl.Surface, event: wl.Surface.Event, data: *App) void {
     switch (event) {
         .enter => |ev| {
             data.wayland_mod.onSurfaceEnteredOutput(ev.output);
         },
         .leave => {},
     }
-    _ = surface;
 }
 
 // ---------------------------------------------------------------------------
 // Keyboard listener — publishes keymap_updated events
 // ---------------------------------------------------------------------------
 
-fn keyboardListener(kb: *wl.Keyboard, event: wl.Keyboard.Event, data: *App) void {
+fn keyboardListener(_: *wl.Keyboard, event: wl.Keyboard.Event, data: *App) void {
     switch (event) {
         .keymap => |ev| {
             data.event_bus.publish(.{
@@ -88,7 +85,6 @@ fn keyboardListener(kb: *wl.Keyboard, event: wl.Keyboard.Event, data: *App) void
         .modifiers => {},
         .repeat_info => {},
     }
-    _ = kb;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +114,7 @@ fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, data: *App) void {
 // Output listener — tracks scale and subpixel for HiDPI
 // ---------------------------------------------------------------------------
 
-fn outputListener(output: *wl.Output, event: wl.Output.Event, data: *WskOutput) void {
+fn outputListener(_: *wl.Output, event: wl.Output.Event, data: *WskOutput) void {
     switch (event) {
         .geometry => |ev| {
             data.subpixel = @intFromEnum(ev.subpixel);
@@ -129,7 +125,6 @@ fn outputListener(output: *wl.Output, event: wl.Output.Event, data: *WskOutput) 
             data.scale = ev.factor;
         },
     }
-    _ = output;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,20 +168,6 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, data: *App
         },
         .global_remove => {},
     }
-}
-
-// ---------------------------------------------------------------------------
-// Display wrappers (errno → c_int)
-// ---------------------------------------------------------------------------
-
-fn displayDispatch(display: *wl.Display) c_int {
-    const e = display.dispatch();
-    return if (@intFromEnum(e) == 0) 0 else -1;
-}
-
-fn displayFlush(display: *wl.Display) c_int {
-    const e = display.flush();
-    return if (@intFromEnum(e) == 0) 0 else -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,20 +297,4 @@ pub fn finish(wayland: *Wayland) void {
     if (wayland.display) |display| {
         display.disconnect();
     }
-}
-
-/// Get the Wayland display file descriptor for polling.
-pub fn getFd(wayland: *Wayland) c_int {
-    return wayland.display.?.getFd();
-}
-
-/// Dispatch pending Wayland events.
-pub fn dispatch(wayland: *Wayland, app: *App) c_int {
-    _ = app;
-    return displayDispatch(wayland.display.?);
-}
-
-/// Flush pending Wayland requests. Returns 0 on success, -1 on error.
-pub fn flush(wayland: *Wayland) c_int {
-    return displayFlush(wayland.display.?);
 }

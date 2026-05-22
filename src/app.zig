@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const types = @import("types.zig");
+const wl = @import("wayland.zig");
 const keys = @import("keys.zig");
 const events = @import("event.zig");
 const config = @import("config.zig");
@@ -8,9 +9,8 @@ const input_raw = @import("input.zig");
 const input_mod = @import("input_mod.zig");
 const theme = @import("theme.zig");
 const devmgr = @import("devmgr.zig");
-const wl = @import("wayland.zig");
+
 const wl_mod = @import("wayland");
-const errno = @import("errno.zig");
 const timerfd = @import("timerfd.zig");
 const render_mod_module = @import("render_mod.zig");
 const keycap = @import("keycap.zig");
@@ -209,7 +209,7 @@ pub fn run(app: *App) c_int {
             .revents = 0,
         },
         .{
-            .fd = @intCast(wl.getFd(&app.wayland)),
+            .fd = app.wayland.display.?.getFd(),
             .events = std.posix.POLL.IN,
             .revents = 0,
         },
@@ -224,14 +224,13 @@ pub fn run(app: *App) c_int {
     while (app.run) {
         // ── Flush Wayland display before blocking ────────────────────
         while (true) {
-            errno.set(0);
-            if (wl.flush(&app.wayland) == -1) {
-                std.log.err("wl_display_flush: {s}", .{errno.strerror()});
+            const e = app.wayland.display.?.flush();
+            if (@intFromEnum(e) == 0) break;
+            if (e != .AGAIN) {
+                std.log.err("wl_display_flush: {s}", .{@tagName(e)});
                 break;
             }
-            if (!errno.isAgain()) break;
         }
-        if (errno.get() != 0 and !errno.isAgain()) break;
 
         // Determine poll timeout: we rely on timerfd for timing, so
         // the poll can block indefinitely (timerfd will wake us up).
@@ -256,8 +255,9 @@ pub fn run(app: *App) c_int {
 
         // ── Dispatch Wayland events ──────────────────────────────────
         if ((pollfds[1].revents & std.posix.POLL.IN) != 0) {
-            if (wl.dispatch(&app.wayland, app) == -1) {
-                std.log.err("wl_display_dispatch failed", .{});
+            const dispatch_err = app.wayland.display.?.dispatch();
+            if (@intFromEnum(dispatch_err) != 0) {
+                std.log.err("wl_display_dispatch: {s}", .{@tagName(dispatch_err)});
                 break;
             }
         }
