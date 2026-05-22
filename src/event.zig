@@ -79,6 +79,20 @@ pub const Event = union(enum) {
 };
 
 // ---------------------------------------------------------------------------
+// EventTag — comptime enum of all event variant names
+// ---------------------------------------------------------------------------
+
+/// Comptime tag derived from the Event union — one value per variant.
+pub const EventTag = std.meta.Tag(Event);
+
+/// Number of event variants (used for bitmask width).
+pub const event_variant_count = @typeInfo(EventTag).@"enum".fields.len;
+
+/// Compile-time bitmask of event variants, used to declare which events
+/// a subscriber is interested in.
+pub const EventMask = std.EnumSet(EventTag);
+
+// ---------------------------------------------------------------------------
 // ModuleId — unique identifier for each subscriber
 // ---------------------------------------------------------------------------
 
@@ -91,39 +105,59 @@ pub const ModuleId = enum(u8) {
 };
 
 // ---------------------------------------------------------------------------
-// EventBus — simple publish/subscribe dispatcher
-//
-// Design decisions:
-//   - Contiguous array of (module_id, callback) pairs so iteration
-//     stays cache-friendly on the publish path.
-//   - No dynamic filtering per subscriber; every subscriber receives
-//     every event and filters by tag in the callback.
-//   - No allocation during publish (only during subscribe).
-//   - Callback takes a generic `*anyopaque` context pointer so each
-//     module can pass its own state struct without a global.
+// Callback type
 // ---------------------------------------------------------------------------
 
 /// Callback signature for event subscribers.
 pub const Callback = *const fn (ctx: *anyopaque, event: Event) void;
 
-/// A single subscriber entry.
+// ---------------------------------------------------------------------------
+// Subscription — single subscriber entry
+// ---------------------------------------------------------------------------
+
 const Subscription = struct {
     module_id: ModuleId,
     ctx: *anyopaque,
     callback: Callback,
+    /// Bitmask of event variants this subscriber handles.
+    /// `publish` skips subscribers whose mask doesn't match.
+    mask: EventMask,
 };
 
 /// Maximum number of subscribers the bus can hold (fixed at init time).
 /// This avoids dynamic resizing during publish.
 pub const max_subscribers: u8 = 8;
 
+// ---------------------------------------------------------------------------
+// EventBus — publish/subscribe dispatcher with comptime event filtering
+//
+// Key improvement over the previous design:
+//   Each subscriber declares which event variants it handles via EventMask.
+//   `publish` checks the mask before invoking the callback, so modules
+//   that don't care about a particular event are skipped immediately
+//   without needing a runtime `switch` in the callback.
+//
+//   Subscribers that handle many events (like appEventHandler) still
+//   use a switch internally, but for modules that handle just one or
+//   two events (like input_mod → keymap_updated only), the filter
+//   saves a runtime tag dispatch.
+//
+//   The mask is computed at comptime via EventMask.initMany(.{ .variant1, .variant2 }).
+// ---------------------------------------------------------------------------
+
 pub const EventBus = struct {
     subscriptions: [max_subscribers]Subscription = undefined,
     subscriber_count: u8 = 0,
 
-    /// Subscribe a module to all events.
-    /// The `ctx` pointer is passed back on every callback invocation.
-    pub fn subscribe(self: *EventBus, module_id: ModuleId, ctx: *anyopaque, callback: Callback) void {
+    /// Subscribe a module to specific events.
+    /// The `mask` declares which event variants the callback handles.
+    pub fn subscribeMasked(
+        self: *EventBus,
+        module_id: ModuleId,
+        ctx: *anyopaque,
+        callback: Callback,
+        mask: EventMask,
+    ) void {
         std.debug.assert(self.subscriber_count < max_subscribers);
         const idx = self.subscriber_count;
         self.subscriber_count += 1;
@@ -131,15 +165,30 @@ pub const EventBus = struct {
             .module_id = module_id,
             .ctx = ctx,
             .callback = callback,
+            .mask = mask,
         };
     }
 
-    /// Publish an event to all subscribers, in subscription order.
+    /// Subscribe a module to all events (backwards-compatible).
+    pub fn subscribe(
+        self: *EventBus,
+        module_id: ModuleId,
+        ctx: *anyopaque,
+        callback: Callback,
+    ) void {
+        self.subscribeMasked(module_id, ctx, callback, EventMask.full);
+    }
+
+    /// Publish an event to all subscribers whose mask includes this
+    /// event's variant, in subscription order.
     pub fn publish(self: *EventBus, event: Event) void {
+        const tag: EventTag = event;
         var i: u8 = 0;
         while (i < self.subscriber_count) : (i += 1) {
             const sub = &self.subscriptions[i];
-            sub.callback(sub.ctx, event);
+            if (sub.mask.contains(tag)) {
+                sub.callback(sub.ctx, event);
+            }
         }
     }
 };

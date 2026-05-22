@@ -256,19 +256,26 @@ pub fn requestLayerConfigure(app: *App) void {
     wayland.layer_pending_configure = true;
 }
 
+/// Errors that can occur during Wayland initialisation.
+pub const WaylandError = error{
+    DisplayConnectFailed,
+    RegistryGetFailed,
+    MissingInterface,
+};
+
 /// Initialize the Wayland connection, bind global interfaces, and
-/// register the seat listener. Returns true on success.
-pub fn init(wayland: *Wayland, app: *App) bool {
+/// register the seat listener.
+pub fn init(wayland: *Wayland, app: *App) WaylandError!void {
     wayland.* = .{};
 
     wayland.display = wl.Display.connect(null) catch {
         std.log.err("wl_display_connect failed", .{});
-        return false;
+        return error.DisplayConnectFailed;
     };
 
     wayland.registry = wayland.display.?.getRegistry() catch {
         std.log.err("Failed to get wl_registry", .{});
-        return false;
+        return error.RegistryGetFailed;
     };
     wayland.registry.?.setListener(*App, registryListener, app);
 
@@ -287,12 +294,11 @@ pub fn init(wayland: *Wayland, app: *App) bool {
 
     if (missing) |name| {
         std.log.err("Error: required Wayland interface '{s}' is not present", .{std.mem.sliceTo(name, 0)});
-        return false;
+        return error.MissingInterface;
     }
 
     wayland.seat.?.setListener(*App, seatListener, app);
     _ = wayland.display.?.roundtrip();
-    return true;
 }
 
 /// Release all Wayland resources.

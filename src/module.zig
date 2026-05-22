@@ -1,22 +1,39 @@
-const std = @import("std");
 const events = @import("event.zig");
 
 // ---------------------------------------------------------------------------
-// Module interface — each subsystem publishes an event handler so the main
-// loop can dispatch events without knowing subsystem internals.
+// Module interface — a module is any struct that embeds ModuleBase and
+// implements the required lifecycle methods.
 //
-// Every module struct contains a pointer to the event bus, so it can
-// publish events during its own processing.  The bus itself is owned by
-// the App struct.
+// Usage:
+//   pub const MyModule = struct {
+//       base: ModuleBase(.MyModule) = .{},
+//       ...
+//   };
 // ---------------------------------------------------------------------------
 
-/// Opaque base that every module embeds.  Provides the `publish` helper.
-pub const Module = struct {
-    /// Event bus reference — set during module initialisation.
-    event_bus: *events.EventBus = undefined,
+/// Minimal base that every module embeds.
+/// Provides direct access to the event bus for publishing events.
+/// The `name` parameter is used for compile-time diagnostics.
+///
+/// Example:
+/// ```zig
+/// pub const InputModule = struct {
+///     base: ModuleBase(.input) = .{},
+///     ...
+/// };
+/// ```
+pub fn ModuleBase(comptime name: @TypeOf(.enum_literal)) type {
+    _ = name;
+    return struct {
+        /// Event bus reference — set during module initialisation.
+        event_bus: *events.EventBus = undefined,
 
-    /// Convenience: publish an event on the bus.
-    pub fn publish(self: *Module, event: events.Event) void {
-        self.event_bus.publish(event);
-    }
-};
+        /// Convenience: publish an event on the bus.
+        pub fn publish(self: *@This(), event: events.Event) void {
+            self.event_bus.publish(event);
+        }
+    };
+}
+
+/// Alias for the default module base (backwards compatible).
+pub const Module = ModuleBase(.generic);

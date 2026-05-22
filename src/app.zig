@@ -3,7 +3,6 @@ const c = @import("c");
 const types = @import("types.zig");
 const keys = @import("keys.zig");
 const events = @import("event.zig");
-const module = @import("module.zig");
 const config = @import("config.zig");
 const input_raw = @import("input.zig");
 const input_mod = @import("input_mod.zig");
@@ -17,8 +16,6 @@ const render_mod_module = @import("render_mod.zig");
 const keycap = @import("keycap.zig");
 
 const App = types.App;
-const KeyList = keys.KeyList;
-const InputModule = input_mod.InputModule;
 
 // ---------------------------------------------------------------------------
 // Timer configuration constants
@@ -32,24 +29,29 @@ const anim_timer_ms: u64 = 16;
 const idle_timer_ms: u64 = 100;
 
 // ---------------------------------------------------------------------------
-// Public API — C ABI
+// App-level error set
+// ---------------------------------------------------------------------------
+
+pub const AppError = error{
+    InitPrivileged,
+    AppInitFailed,
+};
+
+// ---------------------------------------------------------------------------
+// Public API
 // ---------------------------------------------------------------------------
 
 /// Allocate the app struct and start the privileged device manager.
-pub fn initPrivileged(app_ptr: *?*App) bool {
-    const app = std.heap.page_allocator.create(App) catch {
-        std.log.err("Failed to allocate app state", .{});
-        return false;
-    };
+pub fn initPrivileged(app_ptr: *?*App) !void {
+    const app = try std.heap.page_allocator.create(App);
     app.* = .{};
     app_ptr.* = app;
 
     if (devmgr.start(&app.devmgr, &app.devmgr_pid, c.INPUTDEVPATH) > 0) {
         std.heap.page_allocator.destroy(app);
         app_ptr.* = null;
-        return false;
+        return error.InitPrivileged;
     }
-    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,8 +80,7 @@ fn appEventHandler(ctx: *anyopaque, event: events.Event) void {
             handleTick(app, t.now_ns);
         },
         .key_expired => {
-            const key_list: *KeyList = @ptrCast(&app.keys);
-            key_list.clear();
+            app.keys.clear();
             disarmExpiryTimer(app);
             requestRender(app);
         },
@@ -136,44 +137,59 @@ fn renderModEventHandler(ctx: *anyopaque, event: events.Event) void {
 // ---------------------------------------------------------------------------
 
 /// Initialise the app: parse config, load theme, set up input and Wayland.
-pub fn init(app: *App, argc: c_int, argv: [*c][*c]u8) bool {
+pub fn init(app: *App, args: []const [:0]const u8) !void {
     const cfg: *config.Config = @ptrCast(&app.config);
     config.initDefaults(cfg);
-    if (!config.parse(cfg, argc, argv)) return false;
-    if (cfg.exit_after_parse) return true;
+    try config.parse(cfg, args);
+    if (cfg.exit_after_parse) return;
 
     // ── Register modules on the event bus ────────────────────────────
-    app.event_bus.subscribe(.app_mod, app, appEventHandler);
-    app.event_bus.subscribe(.input_mod, app, inputModEventHandler);
-    app.event_bus.subscribe(.wayland_mod, app, waylandModEventHandler);
-    app.event_bus.subscribe(.render_mod, app, renderModEventHandler);
+    app.event_bus.subscribeMasked(.app_mod, app, appEventHandler, events.EventMask.initMany(&.{
+        .key_pressed,
+        .pointer_button,
+        .pointer_scroll,
+        .tick,
+        .key_expired,
+        .quit,
+    }));
+    app.event_bus.subscribeMasked(.input_mod, app, inputModEventHandler, events.EventMask.initMany(&.{
+        .keymap_updated,
+    }));
+    app.event_bus.subscribeMasked(.wayland_mod, app, waylandModEventHandler, events.EventMask.initMany(&.{
+        .layer_configured,
+        .layer_closed,
+        .surface_entered_output,
+        .quit,
+    }));
+    app.event_bus.subscribeMasked(.render_mod, app, renderModEventHandler, events.EventMask.initMany(&.{
+        .request_render,
+        .frame_done,
+        .layer_configured,
+    }));
 
     // ── Initialise sub-modules ───────────────────────────────────────
     app.wayland_mod.init(&app.event_bus);
 
-    _ = theme.init(&app.theme, app.config.key_svg_path);
+    theme.init(&app.theme, app.config.key_svg_path);
 
     // ── Initialise the input module ──────────────────────────────────
-    if (!app.input_mod.init(&app.event_bus)) return false;
+    try app.input_mod.init(&app.event_bus);
 
     // ── Create the libinput udev context ─────────────────────────────
-    app.input_mod_libinput = input_raw.createUdevContext(&app.devmgr);
-    if (app.input_mod_libinput == null) return false;
+    app.input_mod_libinput = try input_raw.createUdevContext(&app.devmgr);
 
-    if (!wl.init(&app.wayland, app)) return false;
+    try wl.init(&app.wayland, app);
 
     // Assign the libinput seat after Wayland has been initialised
     // (the compositor may have seat information available).
-    if (!input_raw.assignSeat(app.input_mod_libinput)) return false;
+    try input_raw.assignSeat(app.input_mod_libinput orelse return error.AppInitFailed);
 
     // ── Create the animation/expiry timerfd ──────────────────────────
     app.timer_fd = timerfd.create();
     if (app.timer_fd < 0) {
         std.log.err("timerfd_create failed", .{});
-        return false;
+        return error.AppInitFailed;
     }
-
-    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,20 +200,22 @@ pub fn init(app: *App, argc: c_int, argv: [*c][*c]u8) bool {
 pub fn run(app: *App) c_int {
     if (app.config.exit_after_parse) return app.config.exit_code;
 
-    var pollfds = [_]c.struct_pollfd{
+    const li = app.input_mod_libinput orelse return 1;
+
+    var pollfds = [_]std.posix.pollfd{
         .{
-            .fd = input_raw.getFd(app.input_mod_libinput),
-            .events = c.POLLIN,
+            .fd = @intCast(input_raw.getFd(li)),
+            .events = std.posix.POLL.IN,
             .revents = 0,
         },
         .{
-            .fd = wl.getFd(&app.wayland),
-            .events = c.POLLIN,
+            .fd = @intCast(wl.getFd(&app.wayland)),
+            .events = std.posix.POLL.IN,
             .revents = 0,
         },
         .{
-            .fd = app.timer_fd,
-            .events = c.POLLIN,
+            .fd = @intCast(app.timer_fd),
+            .events = std.posix.POLL.IN,
             .revents = 0,
         },
     };
@@ -217,27 +235,27 @@ pub fn run(app: *App) c_int {
 
         // Determine poll timeout: we rely on timerfd for timing, so
         // the poll can block indefinitely (timerfd will wake us up).
-        const timeout: c_int = -1;
+        const timeout: i32 = -1;
 
-        if (c.poll(&pollfds, pollfds.len, timeout) < 0) {
-            std.log.err("poll: {s}", .{errno.strerror()});
+        _ = std.posix.poll(&pollfds, timeout) catch |err| {
+            std.log.err("poll: {s}", .{@errorName(err)});
             break;
-        }
+        };
 
         // ── Dispatch libinput events ─────────────────────────────────
-        if ((pollfds[0].revents & c.POLLIN) != 0) {
-            if (input_raw.dispatch(app.input_mod_libinput) != 0) {
+        if ((pollfds[0].revents & std.posix.POLL.IN) != 0) {
+            if (input_raw.dispatch(li) != 0) {
                 std.log.err("libinput_dispatch failed", .{});
                 break;
             }
-            while (input_raw.getEvent(app.input_mod_libinput)) |event| {
+            while (input_raw.getEvent(li)) |event| {
                 app.input_mod.handleEvent(event);
                 input_raw.destroyEvent(event);
             }
         }
 
         // ── Dispatch Wayland events ──────────────────────────────────
-        if ((pollfds[1].revents & c.POLLIN) != 0) {
+        if ((pollfds[1].revents & std.posix.POLL.IN) != 0) {
             if (wl.dispatch(&app.wayland, app) == -1) {
                 std.log.err("wl_display_dispatch failed", .{});
                 break;
@@ -245,7 +263,7 @@ pub fn run(app: *App) c_int {
         }
 
         // ── Dispatch timer events ────────────────────────────────────
-        if ((pollfds[2].revents & c.POLLIN) != 0) {
+        if ((pollfds[2].revents & std.posix.POLL.IN) != 0) {
             const expirations = timerfd.readExpirations(app.timer_fd);
             if (expirations > 0) {
                 // Read the current monotonic time for event subscribers.
@@ -275,8 +293,7 @@ pub fn finish(app: ?*App) void {
         timerfd.close(state.timer_fd);
     }
 
-    const key_list: *KeyList = @ptrCast(&state.keys);
-    key_list.clear();
+    state.keys.clear();
     theme.finish(&state.theme);
     state.input_mod.finish(state.input_mod_libinput);
     wl.finish(&state.wayland);
@@ -293,9 +310,7 @@ pub fn finish(app: ?*App) void {
 /// Handle a tick event: advance animations and check for key expiry.
 fn handleTick(app: *App, now_ns: i64) void {
     const anim_dur_ns: i64 = @as(i64, @intCast(app.config.anim_duration)) * 1_000_000;
-    const key_list: *KeyList = @ptrCast(&app.keys);
-
-    if (key_list.head == null) {
+    if (app.keys.head == null) {
         // No keys — disarm the timer and return.
         timerfd.disarm(app.timer_fd);
         return;
@@ -308,17 +323,17 @@ fn handleTick(app: *App, now_ns: i64) void {
         .tv_sec = now_ts.tv_sec,
         .tv_nsec = now_ts.tv_nsec,
     };
-    if (key_list.expired(@intCast(app.config.timeout), now_key_ts)) {
+    if (app.keys.expired(@intCast(app.config.timeout), now_key_ts)) {
         app.event_bus.publish(.key_expired);
         return;
     }
 
     // Tick animation state machine so entering keys become visible
     // once their duration has elapsed.
-    key_list.tickAnimations(anim_dur_ns, now_ns);
+    app.keys.tickAnimations(anim_dur_ns, now_ns);
 
     // Check if any entry animation is still in progress.
-    const has_anim = key_list.hasActiveAnimation(anim_dur_ns, now_ns) or keycap.shift_active;
+    const has_anim = app.keys.hasActiveAnimation(anim_dur_ns, now_ns) or keycap.shift_active;
 
     // Check if we need to schedule a render for animation continuation.
     if (has_anim and app.wayland.layer_configured and app.wayland.surface != null) {
@@ -326,7 +341,7 @@ fn handleTick(app: *App, now_ns: i64) void {
     }
 
     // Re-arm the timer with the appropriate interval.
-    rearmTimer(app, has_anim, key_list.head != null);
+    rearmTimer(app, has_anim, app.keys.head != null);
 }
 
 /// Re-arm the timerfd with the appropriate interval based on current state.
@@ -368,8 +383,7 @@ fn appendKeypressToApp(app: *App, keypress: *keys.Keypress) void {
     const now_ns = @as(i64, @intCast(now.tv_sec)) * 1_000_000_000 + @as(i64, @intCast(now.tv_nsec));
     keypress.anim_state = .entering;
     keypress.anim_start_ns = now_ns;
-    const key_list: *KeyList = @ptrCast(&app.keys);
-    key_list.append(keypress, @intCast(app.config.max_keys), .{
+    app.keys.append(keypress, @intCast(app.config.max_keys), .{
         .tv_sec = now.tv_sec,
         .tv_nsec = now.tv_nsec,
     });

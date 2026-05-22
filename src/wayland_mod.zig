@@ -24,7 +24,7 @@ const EventBus = events.EventBus;
 
 pub const WaylandModule = struct {
     /// Embedded module base (provides `publish` convenience).
-    base: module.Module = .{},
+    base: module.ModuleBase(.wayland_mod) = .{},
 
     // ── Layer surface state ──────────────────────────────────────────
     /// Cached surface dimensions (logical pixels).

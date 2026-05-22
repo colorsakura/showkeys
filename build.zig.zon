@@ -13,7 +13,7 @@
         "AGENTS.md",
         "LICENSE",
         "README.md",
-    },
+    },  // src/ includes default_key.svg for @embedFile
     .dependencies = .{
         .wayland = .{
             .url = "https://github.com/ifreund/zig-wayland/archive/refs/tags/v0.6.0.tar.gz",

@@ -8,7 +8,7 @@ const errno = @import("errno.zig");
 const PoolBuffer = types.PoolBuffer;
 
 /// Generates a random 6-character suffix for SHM file names using
-/// high-resolution clock nanoseconds as the entropy source.
+/// monotonic clock nanoseconds as the entropy source.
 fn randname(buf: []u8) void {
     var ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_REALTIME, &ts);

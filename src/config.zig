@@ -76,95 +76,107 @@ pub fn parseAnchor(text: []const u8) ?Anchor {
     return null;
 }
 
-/// Parse command-line arguments (C‑style argc/argv) into the config.
-pub fn parse(config: *Config, argc: i32, argv: [*c][*c]u8) bool {
-    var i: i32 = 1;
-    while (i < argc) : (i += 1) {
-        const arg = std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0);
+/// Errors that can occur during config parsing.
+pub const ParseError = error{
+    /// Usage was printed (caller should exit).
+    Usage,
+    /// A required argument value was missing.
+    MissingValue,
+    /// An integer argument could not be parsed.
+    InvalidInteger,
+    /// An anchor string was not recognised.
+    InvalidAnchor,
+    /// An unknown flag was encountered.
+    UnknownFlag,
+};
+
+/// Parse command-line arguments (Zig slice) into the config.
+pub fn parse(config: *Config, args: []const [:0]const u8) ParseError!void {
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
         if (arg.len < 2 or arg[0] != '-') {
             printUsage();
-            return false;
+            return error.Usage;
         }
         switch (arg[1]) {
             'b' => {
                 i += 1;
-                if (i >= argc) return false;
-                config.background = color.parse(std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 0xFFFFFFFF);
+                if (i >= args.len) return error.MissingValue;
+                config.background = color.parse(args[i], 0xFFFFFFFF);
             },
             'f' => {
                 i += 1;
-                if (i >= argc) return false;
-                config.foreground = color.parse(std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 0xFFFFFFFF);
+                if (i >= args.len) return error.MissingValue;
+                config.foreground = color.parse(args[i], 0xFFFFFFFF);
             },
             's' => {
                 i += 1;
-                if (i >= argc) return false;
-                config.specialfg = color.parse(std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 0xFFFFFFFF);
+                if (i >= args.len) return error.MissingValue;
+                config.specialfg = color.parse(args[i], 0xFFFFFFFF);
             },
             'F' => {
                 i += 1;
-                if (i >= argc) return false;
-                config.font = @ptrCast(argv[@as(usize, @intCast(i))]);
+                if (i >= args.len) return error.MissingValue;
+                config.font = args[i].ptr;
             },
             't' => {
                 i += 1;
-                if (i >= argc) return false;
-                config.timeout = std.fmt.parseInt(i32, std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 10) catch {
+                if (i >= args.len) return error.MissingValue;
+                config.timeout = std.fmt.parseInt(i32, args[i], 10) catch {
                     std.log.err("Invalid timeout", .{});
-                    return false;
+                    return error.InvalidInteger;
                 };
             },
             'n' => {
                 i += 1;
-                if (i >= argc) return false;
-                config.max_keys = std.fmt.parseInt(i32, std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 10) catch {
+                if (i >= args.len) return error.MissingValue;
+                config.max_keys = std.fmt.parseInt(i32, args[i], 10) catch {
                     std.log.err("Invalid max key count", .{});
-                    return false;
+                    return error.InvalidInteger;
                 };
                 if (config.max_keys < 1) {
                     std.log.err("Invalid max key count", .{});
-                    return false;
+                    return error.InvalidInteger;
                 }
             },
             'a' => {
                 i += 1;
-                if (i >= argc) return false;
-                const anchor_str = std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0);
+                if (i >= args.len) return error.MissingValue;
+                const anchor_str = args[i];
                 const anchor = parseAnchor(anchor_str) orelse {
                     std.log.err("Invalid anchor value '{s}'", .{anchor_str});
-                    return false;
+                    return error.InvalidAnchor;
                 };
                 config.anchor = anchor.toU32();
             },
             'm' => {
                 i += 1;
-                if (i >= argc) return false;
-                config.margin = std.fmt.parseInt(i32, std.mem.sliceTo(argv[@as(usize, @intCast(i))], 0), 10) catch {
+                if (i >= args.len) return error.MissingValue;
+                config.margin = std.fmt.parseInt(i32, args[i], 10) catch {
                     std.log.err("Invalid margin", .{});
-                    return false;
+                    return error.InvalidInteger;
                 };
             },
             'o' => {
                 std.log.err("-o is unimplemented", .{});
                 config.exit_after_parse = true;
                 config.exit_code = 0;
-                return true;
+                return;
             },
             'k' => {
                 i += 1;
-                if (i >= argc) return false;
-                config.key_svg_path = @ptrCast(argv[@as(usize, @intCast(i))]);
+                if (i >= args.len) return error.MissingValue;
+                config.key_svg_path = args[i].ptr;
             },
             'h' => {
                 printUsage();
-                return false;
+                return error.Usage;
             },
             else => {
                 printUsage();
-                return false;
+                return error.UnknownFlag;
             },
         }
     }
-
-    return true;
 }

@@ -24,7 +24,7 @@ const EventBus = events.EventBus;
 /// State held by the input module.
 pub const InputModule = struct {
     /// Embedded module base (provides `publish` convenience).
-    base: module.Module = .{},
+    base: module.ModuleBase(.input_mod) = .{},
 
     /// xkb context — long-lived, owns keymap/state factories.
     xkb_context: ?*c.struct_xkb_context = null,
@@ -40,16 +40,14 @@ pub const InputModule = struct {
     /// Initialise input state.  Does NOT start libinput (that is done
     /// by the privileged child + the caller via `input.zig`).
     /// Registers the module on the event bus.
-    pub fn init(self: *InputModule, event_bus: *EventBus) bool {
+    pub fn init(self: *InputModule, event_bus: *EventBus) !void {
         self.base.event_bus = event_bus;
 
         self.xkb_context = c.xkb_context_new(c.XKB_CONTEXT_NO_FLAGS);
         if (self.xkb_context == null) {
             std.log.err("xkb_context_new: {s}", .{errno.strerror()});
-            return false;
+            return error.XkbContextCreateFailed;
         }
-
-        return true;
     }
 
     /// Release xkb resources and close the libinput context.

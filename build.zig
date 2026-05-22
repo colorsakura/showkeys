@@ -145,6 +145,7 @@ fn translateCBindings(
         \\struct xkb_keymap;
         \\struct xkb_state;
         \\RsvgHandle *rsvg_handle_new_from_file(const char *file_name, GError **error);
+        \\RsvgHandle *rsvg_handle_new_from_data(const unsigned char *data, unsigned long data_len, GError **error);
         \\gboolean rsvg_handle_render_document(RsvgHandle *handle, cairo_t *cr, const RsvgRectangle *viewport, GError **error);
         \\void g_error_free(GError *error);
         \\void g_object_unref(void *object);

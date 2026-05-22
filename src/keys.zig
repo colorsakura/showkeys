@@ -14,10 +14,9 @@ pub fn deinitModule() void {
 // Types
 // ---------------------------------------------------------------------------
 
-/// Monotonic timestamp — mirrors POSIX `struct timespec` layout.
-/// Use `extern` so that @sizeOf(TimeSpec) == @sizeOf(c.struct_timespec)
-/// and the C ABI bridges can safely memcpy between the two.
-pub const TimeSpec = extern struct {
+/// Monotonic timestamp.
+/// Fields match POSIX `struct timespec` layout.
+pub const TimeSpec = struct {
     tv_sec: i64 = 0,
     tv_nsec: i64 = 0,
 };
@@ -33,9 +32,7 @@ pub const AnimState = enum(u8) {
 /// A single keypress event with display metadata.
 /// Linked-list node; all fields are public for direct field access
 /// in input.zig (sym, name, utf8, anim_state, anim_start_ns).
-/// `extern` guarantees in-memory layout matches the C ABI so the
-/// transitional `export fn` bridges can safely pass pointers.
-pub const Keypress = extern struct {
+pub const Keypress = struct {
     sym: u32 = 0, // xkb_keysym_t (uint32_t on all Linux targets)
     name: [128]u8 = @splat(0), // display name (NUL-terminated)
     utf8: [128]u8 = @splat(0), // UTF-8 text (NUL-terminated)
@@ -53,9 +50,7 @@ pub const Keypress = extern struct {
 };
 
 /// Owning singly-linked list of keypresses with latest-event timestamp.
-/// `extern` guarantees in-memory layout matches the C ABI so the
-/// transitional `export fn` bridges can safely pass pointers.
-pub const KeyList = extern struct {
+pub const KeyList = struct {
     head: ?*Keypress = null,
     last_key: TimeSpec = .{},
 

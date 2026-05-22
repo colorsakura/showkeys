@@ -1,9 +1,14 @@
 const std = @import("std");
 const c = @import("c");
 const types = @import("types.zig");
+const embedded_theme = @import("embedded_theme.zig");
 const icons = @import("icons.zig");
 
 const Theme = types.Theme;
+
+/// Default key SVG embedded at compile time (from embedded_theme/key.svg).
+/// Used when no custom key SVG path is provided via `-k`.
+const default_key_svg = embedded_theme.key_svg;
 
 /// Arena for path string allocations. Freed when `finish()` is called.
 var path_arena: std.heap.ArenaAllocator = undefined;
@@ -18,11 +23,12 @@ fn ensurePathArena() void {
 
 /// Initialize theme state by loading the key SVG and setting up
 /// the icon cache base directory.
-pub fn init(theme: *Theme, key_svg_path: [*c]const u8) bool {
+pub fn init(theme: *Theme, key_svg_path: ?[*:0]const u8) void {
     theme.* = .{};
     theme.key_svg_path = key_svg_path;
 
     if (key_svg_path) |path| {
+        // Load key SVG from the specified file path.
         theme.base_dir = pathDirname(path);
         if (theme.base_dir == null) {
             std.log.err("Unable to allocate icon directory path", .{});
@@ -41,8 +47,22 @@ pub fn init(theme: *Theme, key_svg_path: [*c]const u8) bool {
             }
             theme.key_svg_failed = true;
         }
+    } else {
+        // No custom path — use the embedded default key SVG.
+        var error_ptr: ?*c.GError = null;
+        theme.key_svg = c.rsvg_handle_new_from_data(default_key_svg.ptr, default_key_svg.len, &error_ptr);
+        if (theme.key_svg == null) {
+            const message: []const u8 = if (error_ptr) |err|
+                std.mem.sliceTo(err.message, 0)
+            else
+                "unknown error";
+            std.log.err("Unable to load embedded key SVG: {s}", .{message});
+            if (error_ptr) |err| {
+                c.g_error_free(err);
+            }
+            theme.key_svg_failed = true;
+        }
     }
-    return true;
 }
 
 /// Release theme resources: icon cache, path arena, and the key SVG handle.

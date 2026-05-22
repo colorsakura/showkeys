@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c");
+const embedded_theme = @import("embedded_theme.zig");
 const theme = @import("theme.zig");
 
 // ---------------------------------------------------------------------------
@@ -150,8 +151,9 @@ pub fn specialIconNameC(key_name: [*c]const u8) [*c]const u8 {
 }
 
 /// Find or load an SVG icon for the given icon name.
+/// Priority: embedded → file system (fallback for custom themes).
 pub fn cacheGet(base_dir: [*c]const u8, icon_name: [*c]const u8) ?*c.RsvgHandle {
-    if (base_dir == null or icon_name == null) return null;
+    if (icon_name == null) return null;
 
     ensureCache();
 
@@ -160,25 +162,37 @@ pub fn cacheGet(base_dir: [*c]const u8, icon_name: [*c]const u8) ?*c.RsvgHandle 
     // Check the Zig hash map first.
     if (icon_cache.get(name)) |cached| return cached;
 
-    // Not cached — load the SVG file.
-    const path = theme.joinPath3(base_dir, "icons", icon_name);
-    if (path == null) {
-        icon_cache.put(name, null) catch {};
-        return null;
+    // Try embedded icons first.
+    if (embedded_theme.find(name)) |svg_data| {
+        var error_ptr: ?*c.GError = null;
+        const svg = c.rsvg_handle_new_from_data(svg_data.data.ptr, svg_data.data.len, &error_ptr);
+        if (svg) |s| {
+            icon_cache.put(name, s) catch {};
+            return s;
+        }
+        if (error_ptr) |err| c.g_error_free(err);
     }
 
-    var error_ptr: ?*c.GError = null;
-    const svg = c.rsvg_handle_new_from_file(path, &error_ptr);
-    const result: ?*c.RsvgHandle = if (svg) |s|
-        s
-    else brk: {
-        if (error_ptr) |err| c.g_error_free(err);
-        break :brk null;
-    };
+    // Fallback: load from file system (custom theme directory).
+    if (base_dir != null) {
+        const path = theme.joinPath3(base_dir, "icons", icon_name);
+        if (path != null) {
+            var error_ptr: ?*c.GError = null;
+            const svg = c.rsvg_handle_new_from_file(path, &error_ptr);
+            const result: ?*c.RsvgHandle = if (svg) |s|
+                s
+            else brk: {
+                if (error_ptr) |err| c.g_error_free(err);
+                break :brk null;
+            };
+            icon_cache.put(name, result) catch {};
+            return result;
+        }
+    }
 
-    // Cache the result (null = failure, avoid retrying).
-    icon_cache.put(name, result) catch {};
-    return result;
+    // Not found anywhere — cache the failure.
+    icon_cache.put(name, null) catch {};
+    return null;
 }
 
 /// Free all entries in the icon cache and the icon name map.
