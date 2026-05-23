@@ -171,12 +171,13 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, data: *App
 // ---------------------------------------------------------------------------
 
 /// Destroy the entire layer surface (surface + layer surface + frame callback).
-pub fn destroyLayerSurface(wayland: *types.Wayland) void {
-    if (wayland.frame_callback) |callback| {
+pub fn destroyLayerSurface(app: *App) void {
+    const wayland = &app.wayland;
+    if (app.render_mod.frame_callback) |callback| {
         callback.destroy();
-        wayland.frame_callback = null;
+        app.render_mod.frame_callback = null;
     }
-    wayland.frame_scheduled = false;
+    app.render_mod.frame_scheduled = false;
     if (wayland.layer_surface) |layer_surface| {
         layer_surface.destroy();
         wayland.layer_surface = null;
@@ -206,7 +207,7 @@ fn createLayerSurface(app: *App) bool {
         .overlay,
         "showkeys",
     ) catch {
-        destroyLayerSurface(wayland);
+        destroyLayerSurface(app);
         return false;
     };
     wayland.layer_surface.?.setListener(*App, layerSurfaceListener, app);
@@ -279,9 +280,9 @@ pub fn init(wayland: *Wayland, app: *App) WaylandError!void {
 }
 
 /// Release all Wayland resources.
-pub fn finish(wayland: *Wayland) void {
-    destroyLayerSurface(wayland);
-    var output = wayland.outputs;
+pub fn finish(app: *App) void {
+    destroyLayerSurface(app);
+    var output = app.wayland.outputs;
     while (output) |current| {
         const next = current.next;
         if (current.output) |wl_output| {
@@ -289,8 +290,8 @@ pub fn finish(wayland: *Wayland) void {
         }
         output = next;
     }
-    deinitOutputArena(wayland);
-    if (wayland.display) |display| {
+    deinitOutputArena(&app.wayland);
+    if (app.wayland.display) |display| {
         display.disconnect();
     }
 }

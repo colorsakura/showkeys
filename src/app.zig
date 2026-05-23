@@ -296,9 +296,20 @@ pub fn finish(app: ?*App) void {
     state.keys.clear();
     theme.finish(&state.theme);
     state.input_mod.finish(state.input_mod_libinput);
-    wl.finish(&state.wayland);
+    wl.finish(state);
     devmgr.finish(state.devmgr, state.devmgr_pid);
     std.heap.page_allocator.destroy(state);
+
+    // Cleanup render_mod resources.
+    if (state.render_mod.measure_cairo) |cr| {
+        c.cairo_destroy(cr);
+    }
+    if (state.render_mod.measure_surface) |surface| {
+        c.cairo_surface_destroy(surface);
+    }
+    if (state.render_mod.layout_arena_initialized) {
+        state.render_mod.layout_arena.deinit();
+    }
 
     keys.deinitModule();
 }
@@ -333,7 +344,7 @@ fn handleTick(app: *App, now_ns: i64) void {
     app.keys.tickAnimations(anim_duration_ns, now_ns);
 
     // Check if any entry animation is still in progress.
-    const has_anim = app.keys.hasActiveAnimation(anim_duration_ns, now_ns) or keycap.shift_active;
+    const has_anim = app.keys.hasActiveAnimation(anim_duration_ns, now_ns) or app.render_mod.shift_active;
 
     // Check if we need to schedule a render for animation continuation.
     if (has_anim and app.wayland.layer_configured and app.wayland.surface != null) {

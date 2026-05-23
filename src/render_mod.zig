@@ -155,18 +155,16 @@ fn renderFrame(app: *App) void {
     var width: u32 = 0;
     var height: u32 = 0;
 
-    // Phase 1: measure keycap sizes using a temporary Cairo context.
-    const tmp_surface = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, 1, 1);
-    const cairo = c.cairo_create(tmp_surface);
-    defer {
-        c.cairo_destroy(cairo);
-        c.cairo_surface_destroy(tmp_surface);
-    }
-    setupFontOptions(cairo, wl_state);
+    // Phase 1: measure keycap sizes using a persistent Cairo context.
+    ensureMeasureSurface(rmod);
+    ensureLayoutArena(rmod);
+    _ = rmod.layout_arena.reset(.retain_capacity);
+    setupFontOptions(rmod.measure_cairo, wl_state);
 
     var layouts: []KeycapLayout = &.{};
     const key_count = keycap.measureKeycaps(
-        cairo,
+        rmod.layout_arena.allocator(),
+        rmod.measure_cairo,
         app.keys.head,
         &app.config,
         &app.theme,
@@ -192,7 +190,7 @@ fn renderFrame(app: *App) void {
 
     if (!surface_fits or !surface_matches) {
         if (key_count == 0 or width == 0 or height == 0) {
-            resetSurfaceState(rmod, wl_state);
+            resetSurfaceState(app);
         } else if (wl_state.layer_surface) |layer_surface| {
             layer_surface.setSize(reserved_width, target_height);
         }
@@ -226,7 +224,7 @@ fn renderFrame(app: *App) void {
     c.cairo_paint(cairo_ctx);
     c.cairo_set_operator(cairo_ctx, c.CAIRO_OPERATOR_OVER);
 
-    keycap.renderKeycaps(
+    rmod.shift_active = keycap.renderKeycaps(
         cairo_ctx,
         layouts.ptr,
         key_count,
@@ -256,6 +254,26 @@ fn renderFrame(app: *App) void {
 }
 
 // ---------------------------------------------------------------------------
+// RenderModule resource management
+// ---------------------------------------------------------------------------
+
+/// Lazily initialise the persistent measure surface and Cairo context.
+fn ensureMeasureSurface(rmod: *types.RenderModState) void {
+    if (rmod.measure_surface == null) {
+        rmod.measure_surface = c.cairo_image_surface_create(c.CAIRO_FORMAT_ARGB32, 1, 1);
+        rmod.measure_cairo = c.cairo_create(rmod.measure_surface);
+    }
+}
+
+/// Lazily initialise the layout arena for transient keycap layout arrays.
+fn ensureLayoutArena(rmod: *types.RenderModState) void {
+    if (!rmod.layout_arena_initialized) {
+        rmod.layout_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        rmod.layout_arena_initialized = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // RenderModule methods (operate on the render_mod field of App)
 // ---------------------------------------------------------------------------
 
@@ -270,6 +288,6 @@ fn requestFrameCallback(rmod: *types.RenderModState, surface: *wl.Surface, app: 
 }
 
 /// Reset layer surface state (e.g. when the surface is destroyed).
-fn resetSurfaceState(_: *types.RenderModState, wl_state: *types.Wayland) void {
-    @import("wayland.zig").destroyLayerSurface(wl_state);
+fn resetSurfaceState(app: *App) void {
+    @import("wayland.zig").destroyLayerSurface(app);
 }

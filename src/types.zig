@@ -89,9 +89,6 @@ pub const Wayland = struct {
     height: u32 = 0,
     layer_configured: bool = false,
     layer_pending_configure: bool = false,
-    frame_scheduled: bool = false,
-    dirty: bool = false,
-    frame_callback: ?*wl.Callback = null,
     buffers: [2]PoolBuffer = .{ .{}, .{} },
     current_buffer: ?*PoolBuffer = null,
     output: ?*WskOutput = null,
@@ -110,6 +107,11 @@ pub const RenderModState = struct {
     frame_scheduled: bool = false,
     frame_callback: ?*wl.Callback = null,
     pending_render: bool = false,
+    layout_arena: std.heap.ArenaAllocator = undefined,
+    layout_arena_initialized: bool = false,
+    measure_surface: ?*c.cairo_surface_t = null,
+    measure_cairo: ?*c.cairo_t = null,
+    shift_active: bool = false,
 };
 
 // ---------------------------------------------------------------------------

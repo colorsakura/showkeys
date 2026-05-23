@@ -12,21 +12,6 @@ const KeycapLayout = types.KeycapLayout;
 const Config = types.Config;
 const Theme = types.Theme;
 
-/// Arena for transient layout arrays. Reset on every `measureKeycaps` call.
-var layout_arena: std.heap.ArenaAllocator = undefined;
-var layout_arena_initialized = false;
-
-fn ensureLayoutArena() void {
-    if (!layout_arena_initialized) {
-        layout_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        layout_arena_initialized = true;
-    }
-}
-
-/// Set to `true` by `renderKeycaps()` when any visible key is still
-/// shifting its render_x toward a new target position.
-/// Checked by the event loop to keep the frame loop running.
-pub var shift_active: bool = false;
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -68,7 +53,7 @@ const keycap_style_filled: KeycapStyle = .{
 };
 
 /// Default spacing between keycaps (in logical pixels at scale=1).
-/// Exposed so render.zig can correctly size the layer surface.
+/// Exposed so render_mod.zig can correctly size the layer surface.
 pub const default_gap: c_int = 6;
 
 const tau: f64 = 6.283185307179586;
@@ -163,6 +148,7 @@ fn drawSvgIcon(cairo: ?*c.cairo_t, svg: ?*c.RsvgHandle, layout: *const KeycapLay
 /// Measure keycap layouts: compute dimensions for each visible keypress
 /// and return an array of keycap_layout structs.
 pub fn measureKeycaps(
+    allocator: std.mem.Allocator,
     cairo: ?*c.cairo_t,
     keys: ?*const Keypress,
     config: *const Config,
@@ -184,9 +170,6 @@ pub fn measureKeycaps(
     }
     if (key_count == 0) return 0;
 
-    ensureLayoutArena();
-    _ = layout_arena.reset(.retain_capacity);
-    const allocator = layout_arena.allocator();
     const layouts = allocator.alloc(KeycapLayout, key_count) catch return 0;
 
     const style = &default_keycap_style;
@@ -261,7 +244,7 @@ pub fn renderKeycaps(
     scale: c_int,
     surface_width: u32,
     content_width: u32,
-) void {
+) bool {
     var keycap_render_style = keycap_style_filled;
     keycap_render_style.normal_fg = config.foreground;
     keycap_render_style.special_fg = config.specialfg;
@@ -298,7 +281,7 @@ pub fn renderKeycaps(
     const anim_duration_ns: i64 = @as(i64, @intCast(config.anim_duration_ms)) * 1_000_000;
 
     // Reset shift flag; set back to true if any visible key is moving.
-    shift_active = false;
+    var shift_active_result = false;
 
     for (0..key_count) |i| {
         const layout = &layouts[i];
@@ -315,7 +298,7 @@ pub fn renderKeycaps(
             if (@abs(dx) <= 1) {
                 key_ptr.render_x = target;
             } else {
-                shift_active = true;
+                shift_active_result = true;
                 const step = @as(c_int, @intFromFloat(@as(f64, @floatFromInt(dx)) * shift_lerp_speed));
                 if (step == 0) {
                     key_ptr.render_x += if (dx > 0) 1 else -1;
@@ -331,9 +314,6 @@ pub fn renderKeycaps(
 
         // Use the interpolated render_x as the drawing position.
         const draw_x = key_ptr.render_x;
-        // Temporarily override layout.x so drawSvgKeycap / drawCairoKeycap
-        // use the shifted position rather than the raw target.
-        const layout_x_saved = layout.x;
         layout.x = draw_x;
 
         const progress = animProgress(key_ptr, now_ns, anim_duration_ns);
@@ -381,31 +361,7 @@ pub fn renderKeycaps(
             c.cairo_paint_with_alpha(cairo, eased);
         }
 
-        // Restore layout.x for the caller (render.zig uses it for
-        // content_width calculations; leaving it as draw_x would
-        // cause the reserved width to drift on every frame).
-        layout.x = layout_x_saved;
     }
+    return shift_active_result;
 }
 
-/// Render keycaps directly to a Cairo context (convenience wrapper).
-pub fn renderKeycapsToCairo(
-    cairo: ?*c.cairo_t,
-    keys: ?*const Keypress,
-    config: *const Config,
-    theme_param: *const Theme,
-    scale: c_int,
-    width: *u32,
-    height: *u32,
-) void {
-    c.cairo_set_operator(cairo, c.CAIRO_OPERATOR_SOURCE);
-    color.setSourceU32(cairo, config.background);
-    c.cairo_paint(cairo);
-    c.cairo_set_operator(cairo, c.CAIRO_OPERATOR_OVER);
-
-    var layouts: []KeycapLayout = &.{};
-    const key_count = measureKeycaps(cairo, keys, config, theme_param, scale, width, height, &layouts);
-    if (layouts.len > 0) {
-        renderKeycaps(cairo, layouts.ptr, key_count, config, theme_param, scale, width.*, width.*);
-    }
-}

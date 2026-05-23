@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wl_seat", 5);
     scanner.generate("wl_output", 3);
     scanner.generate("zxdg_output_manager_v1", 1);
-    scanner.generate("zwlr_layer_shell_v1", 1);
+    scanner.generate("zwlr_layer_shell_v1", 5);
 
     const wayland_module = b.createModule(.{
         .root_source_file = scanner.result,
