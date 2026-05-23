@@ -1,3 +1,0 @@
-{"file": "AGENTS.md", "reason": "Quality verification: ensure rendering changes still comply with Apple/glassmorphism design, keycap SVG conventions, and build commands"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify no new code duplication was introduced during refactoring"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify cross-layer data flow (event bus → render_mod → keycap) is consistent after moving global state"}

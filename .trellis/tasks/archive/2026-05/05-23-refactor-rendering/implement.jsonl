@@ -1,3 +1,0 @@
-{"file": "AGENTS.md", "reason": "Project overview, design rules (Apple/glassmorphism), common commands, and project special rules"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Helps identify and eliminate code duplication — relevant for removing duplicate render.zig + render_mod.zig code"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Ensures data flow across modules (event bus → render_mod → keycap) stays consistent after refactoring"}
