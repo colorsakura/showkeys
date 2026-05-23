@@ -27,24 +27,20 @@ pub const Anchor = packed struct {
     }
 };
 
-/// Config is the single source of truth — an `extern struct` whose layout
-/// matches `struct wsk_config` from the original C header.
-/// The pointer-cast in `app.zig` (`@ptrCast(&app.config)`) is safe because
-/// `types.Config` and `config.Config` share the same extern layout.
-pub const Config = extern struct {
+pub const Config = struct {
     foreground: u32 = 0xFFFFFFFF,
     background: u32 = 0x00000000,
     specialfg: u32 = 0xAAAAAAFF,
     font: ?[*:0]const u8 = "monospace 24",
-    timeout: i32 = 1,
+    timeout_seconds: i32 = 1,
     max_keys: i32 = 5,
     key_svg_path: ?[*:0]const u8 = null,
     anchor: u32 = @as(u32, @bitCast(Anchor{ .bottom = true, .right = true })),
-    margin: i32 = 32,
+    margin_px: i32 = 32,
     exit_after_parse: bool = false,
     exit_code: i32 = 0,
     /// Animation duration in milliseconds for keypress entry effects.
-    anim_duration: u32 = 200,
+    anim_duration_ms: u32 = 200,
 };
 
 const usage =
@@ -56,6 +52,13 @@ const usage =
 /// Reset `config` to default values.
 pub fn initDefaults(config: *Config) void {
     config.* = .{};
+}
+
+comptime {
+    std.debug.assert(anchor_top == 1);
+    std.debug.assert(anchor_bottom == 2);
+    std.debug.assert(anchor_left == 4);
+    std.debug.assert(anchor_right == 8);
 }
 
 pub fn printUsage() void {
@@ -123,7 +126,7 @@ pub fn parse(config: *Config, args: []const [:0]const u8) ParseError!void {
             't' => {
                 i += 1;
                 if (i >= args.len) return error.MissingValue;
-                config.timeout = std.fmt.parseInt(i32, args[i], 10) catch {
+                config.timeout_seconds = std.fmt.parseInt(i32, args[i], 10) catch {
                     std.log.err("Invalid timeout", .{});
                     return error.InvalidInteger;
                 };
@@ -153,7 +156,7 @@ pub fn parse(config: *Config, args: []const [:0]const u8) ParseError!void {
             'm' => {
                 i += 1;
                 if (i >= args.len) return error.MissingValue;
-                config.margin = std.fmt.parseInt(i32, args[i], 10) catch {
+                config.margin_px = std.fmt.parseInt(i32, args[i], 10) catch {
                     std.log.err("Invalid margin", .{});
                     return error.InvalidInteger;
                 };

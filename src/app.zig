@@ -138,10 +138,10 @@ fn renderModEventHandler(ctx: *anyopaque, event: events.Event) void {
 
 /// Initialise the app: parse config, load theme, set up input and Wayland.
 pub fn init(app: *App, args: []const [:0]const u8) !void {
-    const cfg: *config.Config = @ptrCast(&app.config);
-    config.initDefaults(cfg);
-    try config.parse(cfg, args);
-    if (cfg.exit_after_parse) return;
+    const config_state: *config.Config = @ptrCast(&app.config);
+    config.initDefaults(config_state);
+    try config.parse(config_state, args);
+    if (config_state.exit_after_parse) return;
 
     // ── Register modules on the event bus ────────────────────────────
     app.event_bus.subscribeMasked(.app_mod, app, appEventHandler, events.EventMask.initMany(&.{
@@ -200,11 +200,11 @@ pub fn init(app: *App, args: []const [:0]const u8) !void {
 pub fn run(app: *App) c_int {
     if (app.config.exit_after_parse) return app.config.exit_code;
 
-    const li = app.input_mod_libinput orelse return 1;
+    const libinput = app.input_mod_libinput orelse return 1;
 
     var pollfds = [_]std.posix.pollfd{
         .{
-            .fd = @intCast(input_raw.getFd(li)),
+            .fd = @intCast(input_raw.getFd(libinput)),
             .events = std.posix.POLL.IN,
             .revents = 0,
         },
@@ -243,11 +243,11 @@ pub fn run(app: *App) c_int {
 
         // ── Dispatch libinput events ─────────────────────────────────
         if ((pollfds[0].revents & std.posix.POLL.IN) != 0) {
-            if (input_raw.dispatch(li) != 0) {
+            if (input_raw.dispatch(libinput) != 0) {
                 std.log.err("libinput_dispatch failed", .{});
                 break;
             }
-            while (input_raw.getEvent(li)) |event| {
+            while (input_raw.getEvent(libinput)) |event| {
                 app.input_mod.handleEvent(event);
                 input_raw.destroyEvent(event);
             }
@@ -309,7 +309,7 @@ pub fn finish(app: ?*App) void {
 
 /// Handle a tick event: advance animations and check for key expiry.
 fn handleTick(app: *App, now_ns: i64) void {
-    const anim_dur_ns: i64 = @as(i64, @intCast(app.config.anim_duration)) * 1_000_000;
+    const anim_duration_ns: i64 = @as(i64, @intCast(app.config.anim_duration_ms)) * 1_000_000;
     if (app.keys.head == null) {
         // No keys — disarm the timer and return.
         timerfd.disarm(app.timer_fd);
@@ -323,17 +323,17 @@ fn handleTick(app: *App, now_ns: i64) void {
         .tv_sec = now_ts.tv_sec,
         .tv_nsec = now_ts.tv_nsec,
     };
-    if (app.keys.expired(@intCast(app.config.timeout), now_key_ts)) {
+    if (app.keys.expired(@intCast(app.config.timeout_seconds), now_key_ts)) {
         app.event_bus.publish(.key_expired);
         return;
     }
 
     // Tick animation state machine so entering keys become visible
     // once their duration has elapsed.
-    app.keys.tickAnimations(anim_dur_ns, now_ns);
+    app.keys.tickAnimations(anim_duration_ns, now_ns);
 
     // Check if any entry animation is still in progress.
-    const has_anim = app.keys.hasActiveAnimation(anim_dur_ns, now_ns) or keycap.shift_active;
+    const has_anim = app.keys.hasActiveAnimation(anim_duration_ns, now_ns) or keycap.shift_active;
 
     // Check if we need to schedule a render for animation continuation.
     if (has_anim and app.wayland.layer_configured and app.wayland.surface != null) {

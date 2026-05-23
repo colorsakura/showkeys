@@ -14,6 +14,12 @@ pub fn deinitModule() void {
 // Types
 // ---------------------------------------------------------------------------
 
+comptime {
+    // name buffer must be large enough for the longest key name + NUL
+    std.debug.assert(@sizeOf(Keypress) <= 1024);
+    std.debug.assert(@sizeOf(TimeSpec) == @sizeOf(i64) * 2);
+}
+
 /// Monotonic timestamp.
 /// Fields match POSIX `struct timespec` layout.
 pub const TimeSpec = struct {

@@ -1,11 +1,11 @@
 const std = @import("std");
 
-pub fn setSourceU32(cr: ?*anyopaque, color: u32) void {
+pub fn setSourceU32(cairo_context: ?*anyopaque, color: u32) void {
     const r = @as(f64, @floatFromInt((color >> 24) & 0xFF)) / 255.0;
     const g = @as(f64, @floatFromInt((color >> 16) & 0xFF)) / 255.0;
     const b = @as(f64, @floatFromInt((color >> 8) & 0xFF)) / 255.0;
     const a = @as(f64, @floatFromInt(color & 0xFF)) / 255.0;
-    if (cr) |p| {
+    if (cairo_context) |p| {
         cairo_set_source_rgba(p, r, g, b, a);
     }
 }

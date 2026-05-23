@@ -54,14 +54,14 @@ fn toCairoSubpixelOrder(subpixel: i32) c.cairo_subpixel_order_t {
 
 fn setupFontOptions(cairo: ?*c.cairo_t, wl_state: *types.Wayland) void {
     c.cairo_set_antialias(cairo, c.CAIRO_ANTIALIAS_BEST);
-    const fo = c.cairo_font_options_create();
-    c.cairo_font_options_set_hint_style(fo, c.CAIRO_HINT_STYLE_FULL);
-    c.cairo_font_options_set_antialias(fo, c.CAIRO_ANTIALIAS_SUBPIXEL);
+    const font_options = c.cairo_font_options_create();
+    c.cairo_font_options_set_hint_style(font_options, c.CAIRO_HINT_STYLE_FULL);
+    c.cairo_font_options_set_antialias(font_options, c.CAIRO_ANTIALIAS_SUBPIXEL);
     if (wl_state.output) |output| {
-        c.cairo_font_options_set_subpixel_order(fo, toCairoSubpixelOrder(output.subpixel));
+        c.cairo_font_options_set_subpixel_order(font_options, toCairoSubpixelOrder(output.subpixel));
     }
-    c.cairo_set_font_options(cairo, fo);
-    c.cairo_font_options_destroy(fo);
+    c.cairo_set_font_options(cairo, font_options);
+    c.cairo_font_options_destroy(font_options);
 }
 
 // ---------------------------------------------------------------------------
@@ -70,8 +70,7 @@ fn setupFontOptions(cairo: ?*c.cairo_t, wl_state: *types.Wayland) void {
 
 /// Frame-done callback — called by the compositor when it has finished
 /// processing the committed surface state.
-fn frameCallback(callback: *wl.Callback, event: wl.Callback.Event, data: *App) void {
-    _ = callback;
+fn frameCallback(_: *wl.Callback, event: wl.Callback.Event, data: *App) void {
     switch (event) {
         .done => {
             const app = data;
@@ -188,10 +187,10 @@ fn renderFrame(app: *App) void {
     const avg_key_width = if (key_count > 0) key_width_sum / key_count_u32 else 0;
     const reserved_scaled = avg_key_width * max_keys_u32 + (max_keys_u32 - 1) * gap_scaled;
     const reserved_width = reserved_scaled / @as(u32, @intCast(scale));
-    const surface_too_small = target_width > wl_state.width or target_height > wl_state.height;
-    const surface_too_large = target_height != wl_state.height or wl_state.width > reserved_width or wl_state.width == 0;
+    const surface_fits = target_width <= wl_state.width and target_height <= wl_state.height;
+    const surface_matches = target_height == wl_state.height and wl_state.width <= reserved_width and wl_state.width > 0;
 
-    if (surface_too_small or surface_too_large) {
+    if (!surface_fits or !surface_matches) {
         if (key_count == 0 or width == 0 or height == 0) {
             resetSurfaceState(rmod, wl_state);
         } else if (wl_state.layer_surface) |layer_surface| {
@@ -271,7 +270,6 @@ fn requestFrameCallback(rmod: *types.RenderModState, surface: *wl.Surface, app: 
 }
 
 /// Reset layer surface state (e.g. when the surface is destroyed).
-fn resetSurfaceState(rmod: *types.RenderModState, wl_state: *types.Wayland) void {
-    _ = rmod;
+fn resetSurfaceState(_: *types.RenderModState, wl_state: *types.Wayland) void {
     @import("wayland.zig").destroyLayerSurface(wl_state);
 }

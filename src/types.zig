@@ -1,3 +1,4 @@
+const std = @import("std");
 const c = @import("c");
 const wayland_mod = @import("wayland");
 const keys_mod = @import("keys.zig");
@@ -95,6 +96,9 @@ pub const Wayland = struct {
     current_buffer: ?*PoolBuffer = null,
     output: ?*WskOutput = null,
     outputs: ?*WskOutput = null,
+    /// Arena allocator for WskOutput nodes.
+    output_arena: std.heap.ArenaAllocator = undefined,
+    output_arena_initialized: bool = false,
 };
 
 // ---------------------------------------------------------------------------
@@ -151,3 +155,9 @@ pub const KeycapLayout = struct {
     text_x: c_int = 0,
     text_y: c_int = 0,
 };
+
+comptime {
+    std.debug.assert(@sizeOf(Keypress) <= 512);
+    std.debug.assert(@sizeOf(KeycapLayout) <= 128);
+    std.debug.assert(@sizeOf(PoolBuffer) <= 128);
+}

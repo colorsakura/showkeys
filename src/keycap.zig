@@ -46,7 +46,7 @@ const KeycapStyle = struct {
     border: u32 = 0,
 };
 
-const keycap_style: KeycapStyle = .{
+const default_keycap_style: KeycapStyle = .{
     .padding_x = 12,
     .padding_y = 6,
     .gap = 6,
@@ -189,19 +189,19 @@ pub fn measureKeycaps(
     const allocator = layout_arena.allocator();
     const layouts = allocator.alloc(KeycapLayout, key_count) catch return 0;
 
-    const s = &keycap_style;
-    const padding_x = s.padding_x * scale;
-    const padding_y = s.padding_y * scale;
-    const gap = s.gap * scale;
-    const icon_size = s.icon_size * scale;
+    const style = &default_keycap_style;
+    const padding_x = style.padding_x * scale;
+    const padding_y = style.padding_y * scale;
+    const gap_px = style.gap * scale;
+    const icon_size_px = style.icon_size * scale;
 
     var text_min_width: c_int = 0;
     var text_min_height: c_int = 0;
     var text_min_baseline: c_int = 0;
     pango.getTextSize(cairo, config.font, &text_min_width, &text_min_height, &text_min_baseline, @floatFromInt(scale), "M");
 
-    const min_content_width = @max(icon_size, text_min_width);
-    const min_content_height = @max(icon_size, text_min_height);
+    const min_content_width = @max(icon_size_px, text_min_width);
+    const min_content_height = @max(icon_size_px, text_min_height);
 
     var i: usize = 0;
     var max_width: c_int = 0;
@@ -217,8 +217,8 @@ pub fn measureKeycaps(
         layout.icon_svg = icons.cacheGet(theme.base_dir, layout.icon_name);
         pango.getTextSize(cairo, config.font, &layout.text_width, &layout.text_height, &layout.text_baseline, @floatFromInt(scale), "%s", layout.label);
 
-        var content_width = if (layout.icon_svg != null) icon_size else layout.text_width;
-        var content_height = if (layout.icon_svg != null) icon_size else layout.text_height;
+        var content_width = if (layout.icon_svg != null) icon_size_px else layout.text_width;
+        var content_height = if (layout.icon_svg != null) icon_size_px else layout.text_height;
         if (content_width < min_content_width) content_width = min_content_width;
         if (content_height < min_content_height) content_height = min_content_height;
         layout.width = content_width + padding_x * 2;
@@ -245,7 +245,7 @@ pub fn measureKeycaps(
         total_width += @intCast(layout.width);
     }
 
-    width.* = @intCast(total_width + (key_count - 1) * @as(usize, @intCast(gap)));
+    width.* = @intCast(total_width + (key_count - 1) * @as(usize, @intCast(gap_px)));
     height.* = @intCast(popup_height);
     out_layouts.* = layouts;
     return key_count;
@@ -262,14 +262,14 @@ pub fn renderKeycaps(
     surface_width: u32,
     content_width: u32,
 ) void {
-    var style = keycap_style_filled;
-    style.normal_fg = config.foreground;
-    style.special_fg = config.specialfg;
+    var keycap_render_style = keycap_style_filled;
+    keycap_render_style.normal_fg = config.foreground;
+    keycap_render_style.special_fg = config.specialfg;
 
-    const gap = style.gap * scale;
-    const radius = style.radius * scale;
-    const border_width = style.border_width * scale;
-    const icon_size = style.icon_size * scale;
+    const gap_px = keycap_render_style.gap * scale;
+    const radius_px = keycap_render_style.radius * scale;
+    const border_width_px = keycap_render_style.border_width * scale;
+    const icon_size_px = keycap_render_style.icon_size * scale;
 
     // Compute target X positions for all keycaps.
     // Phase 1: compute layout positions (anchor-aware start offset).
@@ -288,14 +288,14 @@ pub fn renderKeycaps(
         const layout = &layouts[i];
         layout.x = target_x;
         layout.y = 0;
-        target_x += layout.width + gap;
+        target_x += layout.width + gap_px;
     }
 
     // Compute current time for animation interpolation.
     var now_ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_MONOTONIC, &now_ts);
     const now_ns = @as(i64, @intCast(now_ts.tv_sec)) * 1_000_000_000 + @as(i64, @intCast(now_ts.tv_nsec));
-    const anim_dur_ns: i64 = @as(i64, @intCast(config.anim_duration)) * 1_000_000;
+    const anim_duration_ns: i64 = @as(i64, @intCast(config.anim_duration_ms)) * 1_000_000;
 
     // Reset shift flag; set back to true if any visible key is moving.
     shift_active = false;
@@ -336,7 +336,7 @@ pub fn renderKeycaps(
         const layout_x_saved = layout.x;
         layout.x = draw_x;
 
-        const progress = animProgress(key_ptr, now_ns, anim_dur_ns);
+        const progress = animProgress(key_ptr, now_ns, anim_duration_ns);
         const eased = easeOutCubic(progress);
         const is_entering = eased < 1.0;
 
@@ -353,23 +353,23 @@ pub fn renderKeycaps(
             c.cairo_translate(cairo, -cx, -cy);
         }
 
-        const svg_ok = theme.key_svg != null and !theme.key_svg_failed and drawSvgKeycap(cairo, theme.key_svg, layout);
-        if (!svg_ok) {
+        const svg_succeeded = theme.key_svg != null and !theme.key_svg_failed and drawSvgKeycap(cairo, theme.key_svg, layout);
+        if (!svg_succeeded) {
             if (theme.key_svg != null and !theme.key_svg_failed) {
                 std.log.err("Falling back to Cairo keycap background", .{});
                 @constCast(theme).key_svg_failed = true;
             }
-            drawCairoKeycap(cairo, layout, &style, radius, border_width);
+            drawCairoKeycap(cairo, layout, &keycap_render_style, radius_px, border_width_px);
         }
 
         if (layout.icon_svg != null) {
-            layout.icon_x = draw_x + @divTrunc(layout.width - icon_size, 2);
-            layout.icon_y = layout.y + @divTrunc(layout.height - icon_size, 2);
-            _ = drawSvgIcon(cairo, layout.icon_svg, layout, icon_size);
+            layout.icon_x = draw_x + @divTrunc(layout.width - icon_size_px, 2);
+            layout.icon_y = layout.y + @divTrunc(layout.height - icon_size_px, 2);
+            _ = drawSvgIcon(cairo, layout.icon_svg, layout, icon_size_px);
         } else {
             layout.text_x = draw_x + @divTrunc(layout.width - layout.text_width, 2);
             layout.text_y = layout.y + @divTrunc(layout.height - layout.text_height, 2);
-            color.setSourceU32(cairo, if (layout.special) style.special_fg else style.normal_fg);
+            color.setSourceU32(cairo, if (layout.special) keycap_render_style.special_fg else keycap_render_style.normal_fg);
             c.cairo_move_to(cairo, @floatFromInt(layout.text_x), @floatFromInt(layout.text_y));
             pango.printf(cairo, config.font, @floatFromInt(scale), "%s", layout.label);
         }

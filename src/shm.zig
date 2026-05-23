@@ -9,12 +9,12 @@ const PoolBuffer = types.PoolBuffer;
 
 /// Generates a random 6-character suffix for SHM file names using
 /// monotonic clock nanoseconds as the entropy source.
-fn randname(buf: []u8) void {
+fn randname(buffer: []u8) void {
     var ts: c.struct_timespec = undefined;
     _ = c.clock_gettime(c.CLOCK_REALTIME, &ts);
     var r: u64 = @bitCast(ts.tv_nsec);
     for (0..6) |i| {
-        buf[i] = @intCast('A' + (r & 15) + (r & 16) * 2);
+        buffer[i] = @intCast('A' + (r & 15) + (r & 16) * 2);
         r >>= 5;
     }
 }
@@ -35,6 +35,8 @@ fn createShmFile() ShmError!std.posix.fd_t {
         retries -|= 1;
         const fd = c.shm_open(&name, c.O_RDWR | c.O_CREAT | c.O_EXCL, @as(c.mode_t, 0o600));
         if (fd >= 0) {
+            // Unlink immediately so the name does not persist on disk.
+            // The file descriptor remains valid; failure is non-fatal.
             _ = c.shm_unlink(&name);
             return @intCast(fd);
         }
@@ -49,10 +51,10 @@ fn allocateShmFile(size: usize) ShmError!std.posix.fd_t {
     const fd = try createShmFile();
     errdefer _ = c.close(fd);
 
-    var ret: c_int = undefined;
+    var result: c_int = undefined;
     while (true) {
-        ret = c.ftruncate(fd, @intCast(size));
-        if (ret >= 0) break;
+        result = c.ftruncate(fd, @intCast(size));
+        if (result >= 0) break;
         if (errno.get() != c.EINTR) return error.ShmFtruncateFailed;
     }
 

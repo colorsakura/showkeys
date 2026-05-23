@@ -16,15 +16,13 @@ const errno = @import("errno.zig");
 
 /// libinput open_restricted callback — delegates to the privileged
 /// device manager via the stored file descriptor.
-fn libinputOpenRestricted(path: [*c]const u8, flags: c_int, data: ?*anyopaque) callconv(.c) c_int {
-    _ = flags;
+fn libinputOpenRestricted(path: [*c]const u8, _: c_int, data: ?*anyopaque) callconv(.c) c_int {
     const fd: *c_int = @ptrCast(@alignCast(data.?));
     return devmgr.open(fd.*, path);
 }
 
 /// libinput close_restricted callback.
-fn libinputCloseRestricted(fd: c_int, data: ?*anyopaque) callconv(.c) void {
-    _ = data;
+fn libinputCloseRestricted(fd: c_int, _: ?*anyopaque) callconv(.c) void {
     _ = c.close(fd);
 }
 

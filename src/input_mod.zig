@@ -51,8 +51,8 @@ pub const InputModule = struct {
     }
 
     /// Release xkb resources and close the libinput context.
-    pub fn finish(self: *InputModule, libinput: ?*c.struct_libinput) void {
-        if (libinput) |li| _ = c.libinput_unref(li);
+    pub fn finish(self: *InputModule, libinput_context: ?*c.struct_libinput) void {
+        if (libinput_context) |libinput| _ = c.libinput_unref(libinput);
         if (self.xkb_context) |ctx| c.xkb_context_unref(ctx);
         if (self.xkb_keymap) |km| c.xkb_keymap_unref(km);
         if (self.xkb_state) |st| c.xkb_state_unref(st);

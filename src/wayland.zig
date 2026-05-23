@@ -10,21 +10,17 @@ const App = types.App;
 const Wayland = types.Wayland;
 const WskOutput = types.WskOutput;
 
-/// Arena allocator for `WskOutput` nodes.
-var output_arena: std.heap.ArenaAllocator = undefined;
-var output_arena_initialized = false;
-
-fn ensureOutputArena() void {
-    if (!output_arena_initialized) {
-        output_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        output_arena_initialized = true;
+fn ensureOutputArena(wayland: *Wayland) void {
+    if (!wayland.output_arena_initialized) {
+        wayland.output_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        wayland.output_arena_initialized = true;
     }
 }
 
-fn deinitOutputArena() void {
-    if (output_arena_initialized) {
-        output_arena.deinit();
-        output_arena_initialized = false;
+fn deinitOutputArena(wayland: *Wayland) void {
+    if (wayland.output_arena_initialized) {
+        wayland.output_arena.deinit();
+        wayland.output_arena_initialized = false;
     }
 }
 
@@ -148,8 +144,8 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, data: *App
             } else if (std.mem.eql(u8, iface, std.mem.sliceTo(zwlr.LayerShellV1.interface.name, 0))) {
                 wayland.layer_shell = registry.bind(ev.name, zwlr.LayerShellV1, ev.version) catch return;
             } else if (std.mem.eql(u8, iface, std.mem.sliceTo(wl.Output.interface.name, 0))) {
-                ensureOutputArena();
-                const output = output_arena.allocator().create(WskOutput) catch return;
+                ensureOutputArena(wayland);
+                const output = wayland.output_arena.allocator().create(WskOutput) catch return;
                 output.* = .{};
                 output.output = registry.bind(ev.name, wl.Output, ev.version) catch return;
                 output.scale = 1;
@@ -227,10 +223,10 @@ pub fn requestLayerConfigure(app: *App) void {
     wayland.layer_surface.?.setSize(1, 1);
     wayland.layer_surface.?.setAnchor(@as(zwlr.LayerSurfaceV1.Anchor, @bitCast(app.config.anchor)));
     wayland.layer_surface.?.setMargin(
-        app.config.margin,
-        app.config.margin,
-        app.config.margin,
-        app.config.margin,
+        app.config.margin_px,
+        app.config.margin_px,
+        app.config.margin_px,
+        app.config.margin_px,
     );
     wayland.layer_surface.?.setExclusiveZone(-1);
     wayland.surface.?.commit();
@@ -293,7 +289,7 @@ pub fn finish(wayland: *Wayland) void {
         }
         output = next;
     }
-    deinitOutputArena();
+    deinitOutputArena(wayland);
     if (wayland.display) |display| {
         display.disconnect();
     }
