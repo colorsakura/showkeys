@@ -2,7 +2,7 @@
 
 ## Project overview
 
-ShowKeys is a C11 Wayland utility that displays recent keyboard and pointer button presses on screen. It targets Wayland compositors with `wlr_layer_shell_v1` support and reads input through libinput, requiring setuid/root privileges only during startup to open input devices.
+ShowKeys is a zig Wayland utility that displays recent keyboard and pointer button presses on screen. It targets Wayland compositors with `wlr_layer_shell_v1` support and reads input through libinput, requiring setuid/root privileges only during startup to open input devices.
 
 ## Common commands
 
@@ -35,7 +35,12 @@ sudo make uninstall
 ## High-level architecture
 
 
-## Design rules
+## Project Special Rules
+
+- 必须使用中文回答和思考
+
+
+## Design Rules
 
 - 遵循 Apple Design 设计语言：简洁、克制、圆润、轻量，优先使用清晰的层次、柔和的高光和低对比阴影。
 - 默认主题采用 glassmorphism / Apple 风格玻璃质感：半透明渐变、细边框、高光层和轻微底部阴影，避免厚重拟物或高饱和装饰。

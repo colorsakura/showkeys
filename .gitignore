@@ -2,6 +2,5 @@ build/
 zig-out/
 .zig-cache/
 /.agents/
-/.claude/
 .idea/
 zig-pkg/
